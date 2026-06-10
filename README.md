@@ -131,7 +131,7 @@ sudo apt update
 sudo apt install qemu-system-x86
 ```
 
-**Arch Linux / Manjaro**
+**Arch Linux**
 ```bash
 sudo pacman -S qemu-system-x86
 ```
