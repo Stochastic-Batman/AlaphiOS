@@ -1,0 +1,9 @@
+[package]
+name = "kernel"
+version = "0.1.0"
+edition = "2024"
+authors = ["Stochastic-Batman"]
+license = "GPL-3.0-only"
+repository = "https://github.com/Stochastic-Batman/AlaphiOS"
+
+[dependencies]
