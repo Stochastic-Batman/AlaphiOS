@@ -1,0 +1,30 @@
+# AlaphiOS bootloader configuration reference
+#
+# bootloader 0.11 embeds configuration in the kernel binary itself via a
+# BootloaderConfig struct declared in kernel/src/main.rs (passed to the
+# entry_point! macro).  This file is NOT parsed by any build tool; it is a
+# reference document so the values in main.rs can be reviewed here.
+#
+# Corresponding Rust code (goes in kernel/src/main.rs):
+#
+#   use bootloader_api::{entry_point, BootloaderConfig, config::Mapping};
+#
+#   const BOOTLOADER_CONFIG: BootloaderConfig = {
+#       let mut cfg = BootloaderConfig::new_default();
+#       cfg.mappings.physical_memory = Some(Mapping::FixedAddress(0xFFFF_8000_0000_0000));
+#       cfg.kernel_stack_size = 64 * 4096;
+#       cfg
+#   };
+#
+#   entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
+
+# Linear physical-memory map base.
+# The bootloader maps every physical frame starting at this virtual address,
+# giving the kernel a simple virt = phys + offset translation.
+# Chosen in the upper half of the canonical 48-bit address space, well clear
+# of the kernel image (loaded near 1 MiB) and all user-space addresses.
+physical_memory_offset = "0xFFFF_8000_0000_0000"
+
+# Kernel stack allocated by the bootloader before jumping to kernel_main.
+# 64 pages x 4096 bytes = 256 KiB.
+kernel_stack_pages = 64

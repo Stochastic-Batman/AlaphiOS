@@ -1,0 +1,11 @@
+[package]
+name = "image-builder"
+version = "0.1.0"
+edition = "2024"
+
+# Intentionally excluded from the workspace [members] list.
+# This keeps it off the x86_64-unknown-none build target and lets it
+# use std normally as a host-side build tool.
+
+[dependencies]
+bootloader = "0.11"

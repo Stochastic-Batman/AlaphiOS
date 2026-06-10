@@ -1,0 +1,13 @@
+[build]
+target = "x86_64-unknown-none"
+
+[target.x86_64-unknown-none]
+# Disable SIMD units: the kernel does not save/restore SSE/AVX state on
+# context switches, so the compiler must never emit those instructions.
+rustflags = [
+    "-C", "target-feature=-sse,-sse2,-mmx,-avx,-avx2",
+    "-C", "force-frame-pointers=yes",   # richer stack traces during debugging
+]
+
+# Path is resolved relative to this file (kernel/.cargo/config.toml).
+runner = "../../tools/run.sh"

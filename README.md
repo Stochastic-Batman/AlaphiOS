@@ -144,6 +144,27 @@ Verify the installation:
 qemu-system-x86_64 --version
 ```
 
+### Usage
+
+Build only (no QEMU):
+```bash
+cargo build -p kernel
+```
+
+Build + boot in QEMU:
+```bash
+cargo run -p kernel
+```
+
+Build + boot with GDB stub paused at entry:
+```bash
+ALAPHIOS_DEBUG=1 cargo run -p kernel
+```
+then in another terminal:
+```bash
+gdb -ex 'target remote :1234' target/x86_64-unknown-none/debug/kernel
+```
+
 ## Reference
 
 Silberschatz, A., Galvin, P. B., & Gagne, G. (2018). *Operating System Concepts* (10th ed.). Wiley.
