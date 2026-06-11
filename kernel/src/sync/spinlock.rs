@@ -68,7 +68,7 @@ impl<T> Spinlock<T> {
     // SAFETY: caller must guarantee no other reference exists.
     // Only used during single-threaded init before scheduling starts.
     pub unsafe fn get_mut_unchecked(&self) -> &mut T {
-        &mut *self.data.get()
+        unsafe { &mut *self.data.get() }
     }
 }
 
