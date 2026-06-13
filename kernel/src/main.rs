@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![feature(abi_x86_interrupt)]
 // After heap is implemented: uncomment so Box/Vec/Arc work.
 // extern crate alloc;
 

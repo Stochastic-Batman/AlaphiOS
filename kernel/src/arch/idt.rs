@@ -21,8 +21,8 @@ static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
     }
     idt.page_fault.set_handler_fn(page_fault_handler);
     idt.general_protection_fault.set_handler_fn(gpf_handler);
-    idt[InterruptIndex::Timer as usize].set_handler_fn(timer_handler);
-    idt[InterruptIndex::Keyboard as usize].set_handler_fn(keyboard_handler);
+    idt[InterruptIndex::Timer as u8].set_handler_fn(timer_handler);
+    idt[InterruptIndex::Keyboard as u8].set_handler_fn(keyboard_handler);
     idt
 });
 

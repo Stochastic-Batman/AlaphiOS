@@ -1,7 +1,6 @@
+use crate::sync::atomic::KernelAtomicUsize;
 use pic8259::ChainedPics;
 use spin::Mutex;
-use x86_64::instructions::port::Port;
-use crate::sync::atomic::KernelAtomicUsize;
 
 
 const PIC1_OFFSET: u8 = 0x20;
