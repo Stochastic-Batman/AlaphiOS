@@ -3,7 +3,7 @@
 pub mod gdt;
 pub mod idt;
 pub mod interrupts;
-// pub mod paging;
+pub mod paging;
 
 
 use bootloader_api::BootInfo;
