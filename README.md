@@ -146,14 +146,20 @@ qemu-system-x86_64 --version
 
 ### Usage
 
+All commands must be run from inside the `kernel/` directory:
+
+```bash
+cd kernel
+```
+
 Build only (no QEMU):
 ```bash
-cargo build -p kernel
+cargo build
 ```
 
 Build + boot in QEMU:
 ```bash
-cargo run -p kernel
+cargo run
 ```
 
 Build + boot with GDB stub paused at entry:
