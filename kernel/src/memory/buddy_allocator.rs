@@ -50,7 +50,7 @@ impl BuddyAllocator {
             let size = MIN_BLOCK_SIZE << ord;
             if curr + size > end { break; }
 
-            self.add_to_free_list(curr as *mut u8, ord);
+            unsafe { self.add_to_free_list(curr as *mut u8, ord); }
             curr += size;
         }
     }
@@ -70,12 +70,12 @@ impl BuddyAllocator {
         if found_ord > MAX_ORDER { return ptr::null_mut(); }
 
         let block = self.free_lists[found_ord];
-        self.free_lists[found_ord] = ptr::read(block as *const *mut u8);
+        self.free_lists[found_ord] = unsafe { ptr::read(block as *const *mut u8) };
 
         while found_ord > ord {
             found_ord -= 1;
-            let buddy = block.add(MIN_BLOCK_SIZE << found_ord);
-            self.add_to_free_list(buddy, found_ord);
+            let buddy = unsafe { block.add(MIN_BLOCK_SIZE << found_ord) };
+            unsafe { self.add_to_free_list(buddy, found_ord); }
         }
 
         block
@@ -95,14 +95,14 @@ impl BuddyAllocator {
             let mut is_free = false;
             let mut ptr_to_node = &mut self.free_lists[ord] as *mut *mut u8;
 
-            while !(*ptr_to_node).is_null() {
-                if *ptr_to_node as usize == buddy {
-                    let next_node = ptr::read(*ptr_to_node as *const *mut u8);
-                    ptr::write(ptr_to_node, next_node);
+            while unsafe { !(*ptr_to_node).is_null() } {
+                if unsafe { *ptr_to_node } as usize == buddy {
+                    let next_node = unsafe { ptr::read(*ptr_to_node as *const *mut u8) };
+                    unsafe { ptr::write(ptr_to_node, next_node); }
                     is_free = true;
                     break;
                 }
-                ptr_to_node = *ptr_to_node as *mut *mut u8;
+                ptr_to_node = unsafe { *ptr_to_node as *mut *mut u8 };
             }
 
             if is_free {
@@ -113,12 +113,12 @@ impl BuddyAllocator {
             }
         }
 
-        self.add_to_free_list(current_ptr as *mut u8, ord);
+        unsafe { self.add_to_free_list(current_ptr as *mut u8, ord); }
     }
 
 
     unsafe fn add_to_free_list(&mut self, ptr: *mut u8, order: usize) {
-        ptr::write(ptr as *mut *mut u8, self.free_lists[order]);
+        unsafe { ptr::write(ptr as *mut *mut u8, self.free_lists[order]); }
         self.free_lists[order] = ptr;
     }
 }
@@ -135,17 +135,17 @@ impl LockedBuddyAllocator {
     }
 
     pub unsafe fn init(&self, heap_start: usize, heap_size: usize) {
-        self.0.lock().init(heap_start, heap_size)
+        unsafe { self.0.lock().init(heap_start, heap_size); }
     }
 }
 
 
 unsafe impl GlobalAlloc for LockedBuddyAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        self.0.lock().alloc_inner(layout)
+        unsafe { self.0.lock().alloc_inner(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        self.0.lock().dealloc_inner(ptr, layout)
+        unsafe { self.0.lock().dealloc_inner(ptr, layout); }
     }
 }

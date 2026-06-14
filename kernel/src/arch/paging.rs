@@ -20,9 +20,11 @@ impl PageMapper {
         let l4_table_virt_addr = phys_mem_offset + l4_table_phys_addr.as_u64();
 
         let l4_table_ptr: *mut PageTable = l4_table_virt_addr.as_mut_ptr();
-        let l4_table: &'static mut PageTable = &mut *l4_table_ptr;
 
-        let inner = OffsetPageTable::new(l4_table, phys_mem_offset);
+        let inner = unsafe {
+            let l4_table: &'static mut PageTable = &mut *l4_table_ptr;
+            OffsetPageTable::new(l4_table, phys_mem_offset)
+        };
 
         Self { inner }
     }
@@ -34,10 +36,7 @@ impl PageMapper {
     }
 
     pub fn unmap_page(&mut self, page: Page<Size4KiB>) -> PhysFrame {
-        let (frame, mapper_flush) = unsafe {
-            self.inner.unmap(page).expect("unmap_page failed")
-        };
-
+        let (frame, mapper_flush) = self.inner.unmap(page).expect("unmap_page failed");
         mapper_flush.flush();
         frame
     }
