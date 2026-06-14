@@ -1,5 +1,6 @@
 [workspace]
 members = ["kernel"]
+exclude = ["tools/image-builder"]
 resolver = "2"
 
 # no_std kernels cannot unwind; abort on panic in both profiles.

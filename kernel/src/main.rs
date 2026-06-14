@@ -75,15 +75,13 @@ macro_rules! serial_println {
 // Entry point 
 entry_point!(kernel_main);
 
-fn kernel_main(_boot_info: &'static mut BootInfo) -> ! {
+fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     serial_init();
     serial_println!("AlaphiOS booting...");
 
-    // Step 3: GDT -> IDT -> PIC/interrupts.
-    // arch::init(boot_info);
-    // serial_println!("arch init done");
+    arch::init(boot_info);
+    serial_println!("arch init done");
 
-    // Step 4 (uncomment when memory/ is implemented):
     // memory::init(boot_info);
     // serial_println!("memory init done");
 

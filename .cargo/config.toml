@@ -1,5 +1,1 @@
-[build]
-target = "x86_64-unknown-none"
-
-[unstable]
-build-std = ["core", "compiler_builtins", "alloc"]
+# intentionally empty; kernel-specific settings live in kernel/.cargo/config.toml
