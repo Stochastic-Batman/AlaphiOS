@@ -1,5 +1,6 @@
 // Everything here is x86-64-specific. 
 // Nothing outside arch/ should call CPU instructions directly.
+pub mod context;
 pub mod gdt;
 pub mod idt;
 pub mod interrupts;
