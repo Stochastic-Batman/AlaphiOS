@@ -4,20 +4,7 @@
 use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicBool, Ordering};
-use crate::sync::atomic::KernelAtomicUsize; // Stub until task struct exists. Will be replaced by current_task().preempt_count.increment() / .decrement().
-
-
-static GLOBAL_PREEMPT_COUNT: KernelAtomicUsize = KernelAtomicUsize::new(0);
-
-
-pub fn preempt_disable() {
-    GLOBAL_PREEMPT_COUNT.increment();
-}
-
-pub fn preempt_enable() {
-    // After task struct is implemented: also check if a reschedule is pending and yield if so.
-    GLOBAL_PREEMPT_COUNT.decrement();
-}
+use crate::process::task::{preempt_disable, preempt_enable};
 
 
 pub struct Spinlock<T> {
@@ -51,7 +38,7 @@ impl<T> Spinlock<T> {
             core::hint::spin_loop();
         }
         preempt_disable();
-        SpinlockGuard::new(self)
+        SpinlockGuard { lock: self }
     }
 
     // Single attempt; returns None immediately if the lock is taken.
@@ -59,14 +46,13 @@ impl<T> Spinlock<T> {
     pub fn try_lock(&self) -> Option<SpinlockGuard<'_, T>> {
         if self.locked.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
             preempt_disable();
-            Some(SpinlockGuard::new(self))
+            Some(SpinlockGuard { lock: self })
         } else {
             None
         }
     }
 
-    // SAFETY: caller must guarantee no other reference exists.
-    // Only used during single-threaded init before scheduling starts.
+    // SAFETY: caller must guarantee no other reference exists (single-threaded init only).
     pub unsafe fn get_mut_unchecked(&self) -> &mut T {
         unsafe { &mut *self.data.get() }
     }
