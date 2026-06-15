@@ -85,6 +85,10 @@ impl MlfqScheduler {
     }
 
     pub fn prepare_switch(&mut self) -> Option<(*mut Task, *const Task)> {
+        if !self.needs_reschedule {
+           return None;
+        }
+
         let arc_in = match self.pick_next() {
             Some(task) => task,
             None => {
