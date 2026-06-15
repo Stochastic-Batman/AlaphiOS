@@ -1,10 +1,10 @@
 #![no_std]
 #![no_main]
 #![feature(abi_x86_interrupt)]
-// After heap is implemented: uncomment so Box/Vec/Arc work.
-// extern crate alloc;
+extern crate alloc;
 
-use bootloader_api::{entry_point, BootInfo};
+use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
+use bootloader_api::config::Mapping;
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use spin::Mutex;
@@ -72,18 +72,31 @@ macro_rules! serial_println {
 }
 
 
-// Entry point 
-entry_point!(kernel_main);
+const BOOTLOADER_CONFIG: BootloaderConfig = {
+    let mut cfg = BootloaderConfig::new_default();
+    cfg.mappings.physical_memory = Some(Mapping::FixedAddress(0xFFFF_8000_0000_0000));
+    cfg.kernel_stack_size = 64 * 4096;
+    cfg
+};
+
+
+entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
+
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     serial_init();
     serial_println!("AlaphiOS booting...");
 
-    arch::init(boot_info);
+    arch::init();
     serial_println!("arch init done");
 
-    // memory::init(boot_info);
-    // serial_println!("memory init done");
+    memory::init(boot_info);
+    serial_println!("memory init done");
+    {
+        use alloc::boxed::Box;
+        let probe = Box::new(0xDEAD_BEEFu64);
+        serial_println!("heap: {:x} @ {:p}", *probe, probe);
+    }
 
     // scheduler::init(); // (uncomment when scheduler/ is implemented):
 

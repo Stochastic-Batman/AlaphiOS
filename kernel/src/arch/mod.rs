@@ -9,7 +9,7 @@ pub mod paging;
 use bootloader_api::BootInfo;
 
 
-pub fn init(_boot_info: &'static mut BootInfo) {
+pub fn init() {
     gdt::init();
     idt::init();
     interrupts::init();
