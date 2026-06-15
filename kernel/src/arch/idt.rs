@@ -2,7 +2,7 @@ use crate::arch::gdt::DOUBLE_FAULT_IST_INDEX;
 use crate::{serial_println};
 use spin::Lazy;
 use x86_64::registers::control::Cr2;
-use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode}; 
+use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
 
 #[derive(Debug, Clone, Copy)]
@@ -53,7 +53,9 @@ extern "x86-interrupt" fn gpf_handler(frame: InterruptStackFrame, error: u64) {
 // IRQ handlers (thin FLIHs; heavy work deferred to SLIHs)
 extern "x86-interrupt" fn timer_handler(_frame: InterruptStackFrame) {
     crate::arch::interrupts::tick();
-    crate::arch::interrupts::end_of_interrupt(InterruptIndex::Timer as u8);
+    crate::arch::interrupts::end_of_interrupt(InterruptIndex::Timer as u8);  // EOI before schedule() so the PIC is not blocked if switch_to suspends this handler mid-flight.
+    crate::scheduler::tick();
+    crate::scheduler::schedule();
 }
 
 extern "x86-interrupt" fn keyboard_handler(_frame: InterruptStackFrame) {

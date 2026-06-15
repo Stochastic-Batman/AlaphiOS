@@ -56,6 +56,11 @@ impl<T> Spinlock<T> {
     pub unsafe fn get_mut_unchecked(&self) -> &mut T {
         unsafe { &mut *self.data.get() }
     }
+
+
+    pub fn as_ptr(&self) -> *mut T {
+        self.data.get()
+    }
 }
 
 
