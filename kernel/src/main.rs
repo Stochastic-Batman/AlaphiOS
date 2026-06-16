@@ -98,7 +98,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         serial_println!("heap: {:x} @ {:p}", *probe, probe);
     }
 
-    // scheduler::init(); // (uncomment when scheduler/ is implemented):
+
+    scheduler::init();
+    use crate::process::task::Task;
+    scheduler::spawn(Task::new(scheduler_smoke_a, 0, None));
+    scheduler::spawn(Task::new(scheduler_smoke_b, 0, None));
+    serial_println!("scheduler smote tests passed");
 
     serial_println!("boot complete, entering idle loop");
     loop {
@@ -106,6 +111,26 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
 }
 
+
+fn scheduler_smoke_a() -> ! {
+    loop {
+        serial_println!("[A]");
+        let end = crate::arch::interrupts::TICKS.load() + 20;
+        while crate::arch::interrupts::TICKS.load() < end {
+            x86_64::instructions::hlt();
+        }
+    }
+}
+
+fn scheduler_smoke_b() -> ! {
+    loop {
+        serial_println!("[B]");
+        let end = crate::arch::interrupts::TICKS.load() + 20;
+        while crate::arch::interrupts::TICKS.load() < end {
+            x86_64::instructions::hlt();
+        }
+    }
+}
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {

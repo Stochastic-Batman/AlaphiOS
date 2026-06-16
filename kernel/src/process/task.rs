@@ -9,6 +9,16 @@ use x86_64::registers::control::Cr3;
 const KERNEL_STACK_SIZE: usize = 64 * 1024;
 static PREEMPT_COUNT: AtomicU32 = AtomicU32::new(0);  // stub: replaced by per-task field access via current_task() once the scheduler owns CURRENT.
 
+
+#[unsafe(naked)]
+unsafe extern "C" fn task_trampoline() {
+    core::arch::naked_asm!(
+        "sti",
+        "ret",
+    )
+}
+
+
 pub enum TaskState {
     Running,
     Ready,
@@ -53,15 +63,16 @@ impl Task {
         let top = (stack.as_mut_ptr() as usize + stack.len()) & !15;  // left_op & 11110000 clears the lower 4 bits, aligning it as x86_64 demands.
         unsafe {  // these callee-saved registers must not change (or change, but must be restored before the function exits)
             let ptr = top as *mut u64;
-            ptr.sub(1).write(entry as u64); // ret addr consumed by switch_to's `ret`
-            ptr.sub(2).write(0); // rbx
-            ptr.sub(3).write(0); // rbp
-            ptr.sub(4).write(0); // r12
-            ptr.sub(5).write(0); // r13
-            ptr.sub(6).write(0); // r14
-            ptr.sub(7).write(0); // r15
+            ptr.sub(1).write(entry as u64); // consumed by trampoline's ret
+            ptr.sub(2).write(task_trampoline as u64);  // consumed by switch_to's ret
+            ptr.sub(3).write(0); // rbx
+            ptr.sub(4).write(0); // rbp
+            ptr.sub(5).write(0); // r12
+            ptr.sub(6).write(0); // r13
+            ptr.sub(7).write(0); // r14
+            ptr.sub(8).write(0); // r15
         }
-        (top - 7 * 8) as u64
+        (top - 8 * 8) as u64
     }
 }
 
