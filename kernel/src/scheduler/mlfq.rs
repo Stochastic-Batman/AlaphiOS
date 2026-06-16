@@ -1,5 +1,6 @@
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
+use crate::process::pid::Pid;
 use crate::process::task::{Task, TaskState};
 use crate::sync::spinlock::Spinlock;
 
@@ -53,7 +54,7 @@ impl MlfqScheduler {
         self.ticks_remaining = TIME_SLICES[priority];
     }
 
-    pub fn remove_current(&mut self) {
+    pub fn remove_current(&mut self) -> Option<Arc<Spinlock<Task>>> {
         if self.current.is_some() {
             self.ticks_remaining = 0;
             self.needs_reschedule = true;
@@ -161,7 +162,7 @@ impl MlfqScheduler {
                     task_guard.priority = (i - 1) as u8;
                 }
 
-                promoted_queues[(i - 1)].push_back(task_arc);
+                promoted_queues[i - 1].push_back(task_arc);
             }
         }
 

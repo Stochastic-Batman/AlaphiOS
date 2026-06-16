@@ -52,7 +52,7 @@ impl Task {
         Task {
             pid,
             tid: Tid::next(),
-            thread_id: pid,
+            thread_group: pid,
             state: TaskState::Ready,
             rsp,
             cr3: Cr3::read().0.start_address().as_u64(),  // page directory base register; stores phys addr of the root page table.

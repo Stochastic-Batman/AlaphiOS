@@ -3,6 +3,7 @@ pub mod mlfq;
 use alloc::sync::Arc;
 use spin::Lazy;
 use crate::process::pid::Pid;
+use crate::process::table::TaskRegistry;
 use crate::process::task::Task;
 use crate::sync::spinlock::Spinlock;
 use mlfq::MlfqScheduler;
