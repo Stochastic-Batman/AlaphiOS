@@ -1,6 +1,15 @@
-// preemptive kernel; 
+// preemptive kernel;
 // spinlocks must disable preemption while held to prevent a higher-priority task
 // from re-entering kernel code that already holds this lock.
+//
+// Global lock hierarchy (must always be acquired in this order to prevent deadlock):
+//   1. TASK_TABLE
+//   2. SCHEDULER
+//   3. individual task spinlock (Arc<Spinlock<Task>>)
+//
+// No code may acquire a lock with a lower number while holding one with a higher number.
+// Example of valid sequence: TASK_TABLE.lock() -> inner SCHEDULER.lock() -> task.lock()
+// Example of invalid sequence: task.lock() -> TASK_TABLE.lock() => would violate hierarchy
 use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicBool, Ordering};

@@ -34,7 +34,7 @@ pub struct Task {
     pub state: TaskState,
     pub rsp: u64,
     pub cr3: u64,
-    pub preempt_count: u32,
+    pub preempt_count: u32,  // TODO: replace global PREEMPT_COUNT stub with this field once current_task() exists in the scheduler
     pub priority: u8,
     pub parent: Option<Pid>,
     pub children: Vec<Pid>,

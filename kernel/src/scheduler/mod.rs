@@ -20,7 +20,9 @@ pub fn init() {
 
 
 pub fn spawn(task: Task) {
-    SCHEDULER.lock().push(Arc::new(Spinlock::new(task)));
+    let arc = Arc::new(Spinlock::new(task));
+    crate::process::table::TASK_TABLE.lock().insert(arc.clone());
+    SCHEDULER.lock().push(arc);
 }
 
 
