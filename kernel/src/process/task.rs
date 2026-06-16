@@ -30,6 +30,7 @@ pub enum TaskState {
 pub struct Task {
     pub pid: Pid,
     pub tid: Tid,
+    pub thread_group: Pid,
     pub state: TaskState,
     pub rsp: u64,
     pub cr3: u64,
@@ -37,6 +38,7 @@ pub struct Task {
     pub priority: u8,
     pub parent: Option<Pid>,
     pub children: Vec<Pid>,
+    pub exit_code: Option<i32>,
     kernel_stack: Vec<u8>,
 }
 
@@ -45,9 +47,12 @@ impl Task {
     pub fn new(entry: fn() -> !, priority: u8, parent: Option<Pid>) -> Self {
         let mut kernel_stack = vec![0u8; KERNEL_STACK_SIZE];
         let rsp = Self::setup_stack(&mut kernel_stack, entry);
+        let pid = Pid::next();
+
         Task {
-            pid: Pid::next(),
+            pid,
             tid: Tid::next(),
+            thread_id: pid,
             state: TaskState::Ready,
             rsp,
             cr3: Cr3::read().0.start_address().as_u64(),  // page directory base register; stores phys addr of the root page table.
@@ -55,6 +60,7 @@ impl Task {
             priority,
             parent,
             children: Vec::new(),
+            exit_code: None,
             kernel_stack,
         }
     }

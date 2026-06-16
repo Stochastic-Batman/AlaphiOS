@@ -2,6 +2,7 @@ pub mod mlfq;
 
 use alloc::sync::Arc;
 use spin::Lazy;
+use crate::process::pid::Pid;
 use crate::process::task::Task;
 use crate::sync::spinlock::Spinlock;
 use mlfq::MlfqScheduler;
@@ -43,5 +44,30 @@ pub fn schedule() {
 fn idle_task() -> ! {
     loop {
         x86_64::instructions::hlt();
+    }
+}
+
+
+pub fn current_pid() -> Pid {
+    SCHEDULER.lock().current_pid()
+}
+
+
+pub fn remove_current() {
+    let _ = SCHEDULER.lock().remove_current();
+}
+
+
+pub fn unblock(pid: Pid) {
+    if let Some(task_lock) = crate::process::table::TASK_TABLE.lock().get(pid) {
+        {
+            let mut task = task_lock.lock();
+            if let crate::process::task::TaskState::Blocked = task.state {
+                task.state = crate::process::task::TaskState::Ready;
+            } else {
+                return;
+            }
+        }
+        SCHEDULER.lock().push(task_lock);
     }
 }

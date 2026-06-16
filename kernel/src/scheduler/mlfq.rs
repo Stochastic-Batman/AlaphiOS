@@ -37,6 +37,10 @@ impl MlfqScheduler {
         }
     }
 
+    pub fn current_pid(&self) -> Pid {
+        self.current.as_ref().map(|task| task.lock().pid).expect("No current task running")
+    }
+
     // Mark the task Running, store it in self.current and set ticks_remaining = TIME_SLICES[task.priority].
     pub fn set_current(&mut self, task: Arc<Spinlock<Task>>) {
         let priority = {
@@ -47,6 +51,14 @@ impl MlfqScheduler {
 
         self.current = Some(task);
         self.ticks_remaining = TIME_SLICES[priority];
+    }
+
+    pub fn remove_current(&mut self) {
+        if self.current.is_some() {
+            self.ticks_remaining = 0;
+            self.needs_reschedule = true;
+        }
+        self.current.take()
     }
 
     pub fn push(&mut self, task: Arc<Spinlock<Task>>) {
@@ -97,17 +109,20 @@ impl MlfqScheduler {
             }
         };
 
-        let arc_out = self.current.take().unwrap();
+        let out_ptr: *mut Task = if let Some(arc_out) = self.current.take() {
+            let prio = {
+                let mut guard = arc_out.lock();
+                let p = core::cmp::min((guard.priority + 1) as usize, NUM_QUEUES - 1);
+                guard.priority = p as u8;
+                guard.state = TaskState::Ready;
+                p
+            };
 
-        let prio = {
-            let mut guard = arc_out.lock();
-            let p = core::cmp::min((guard.priority + 1) as usize, NUM_QUEUES - 1);
-            guard.priority = p as u8;
-            guard.state = TaskState::Ready;
-            p
+            self.queues[prio].push_back(arc_out.clone());
+            arc_out.as_ptr()
+        } else {
+            core::ptr::null_mut()
         };
-
-        self.queues[prio].push_back(arc_out.clone());
 
         let prio_in = {
             let mut guard = arc_in.lock();
@@ -115,14 +130,12 @@ impl MlfqScheduler {
             guard.priority as usize
         };
 
-        // SAFETY: interrupts are disabled (timer handler) + single-core
-        let out_ptr: *mut Task = arc_out.as_ptr();
         let in_ptr: *const Task = arc_in.as_ptr();
 
         self.current = Some(arc_in);
         self.ticks_remaining = TIME_SLICES[prio_in];
         self.needs_reschedule = false;
-        
+
         Some((out_ptr, in_ptr))
     }
 
