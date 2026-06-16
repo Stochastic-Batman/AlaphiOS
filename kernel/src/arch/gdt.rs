@@ -51,3 +51,8 @@ pub fn init() {
         load_tss(GDT.1.tss);
     }
 }
+
+
+pub fn syscall_selectors() -> (SegmentSelector, SegmentSelector) {
+    (GDT.1.kernel_code, GDT.1.user_code)
+}

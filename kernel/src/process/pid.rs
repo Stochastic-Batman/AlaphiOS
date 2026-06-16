@@ -21,6 +21,9 @@ impl Pid {
         let id: u64 = NEXT_PID.fetch_add(1, Ordering::Relaxed);
         Self(id)
     }
+
+    pub fn from_u64(v: u64) -> Self { Self(v) }
+    pub fn as_u64(self) -> u64 { self.0 }
 }
 
 impl Tid {
@@ -28,4 +31,6 @@ impl Tid {
         let id: u64 = NEXT_TID.fetch_add(1, Ordering::Relaxed);
         Self(id)
     }
+
+    pub fn as_u64(self) -> u64 { self.0 }
 }

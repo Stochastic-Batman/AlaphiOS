@@ -1,6 +1,6 @@
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
-use crate::process::pid::Pid;
+use crate::process::pid::{Pid, Tid};
 use crate::process::task::{Task, TaskState};
 use crate::sync::spinlock::Spinlock;
 
@@ -40,6 +40,14 @@ impl MlfqScheduler {
 
     pub fn current_pid(&self) -> Pid {
         self.current.as_ref().map(|task| task.lock().pid).expect("No current task running")
+    }
+
+    pub fn current_ppid(&self) -> Option<Pid> {
+        self.current.as_ref().and_then(|task| task.lock().parent)
+    }
+
+    pub fn current_tid(&self) -> Tid {
+        self.current.as_ref().map(|task| task.lock().tid).expect("No current task running")
     }
 
     // Mark the task Running, store it in self.current and set ticks_remaining = TIME_SLICES[task.priority].

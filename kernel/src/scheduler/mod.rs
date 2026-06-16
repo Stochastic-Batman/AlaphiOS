@@ -2,7 +2,7 @@ pub mod mlfq;
 
 use alloc::sync::Arc;
 use spin::Lazy;
-use crate::process::pid::Pid;
+use crate::process::pid::{Pid, Tid};
 use crate::process::table::TaskRegistry;
 use crate::process::task::Task;
 use crate::sync::spinlock::Spinlock;
@@ -53,6 +53,16 @@ fn idle_task() -> ! {
 
 pub fn current_pid() -> Pid {
     SCHEDULER.lock().current_pid()
+}
+
+
+pub fn current_ppid() -> Option<Pid> {
+    SCHEDULER.lock().current_ppid()
+}
+
+
+pub fn current_tid() -> Tid {
+    SCHEDULER.lock().current_tid()
 }
 
 

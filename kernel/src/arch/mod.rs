@@ -5,13 +5,13 @@ pub mod gdt;
 pub mod idt;
 pub mod interrupts;
 pub mod paging;
+pub mod syscall;
 
-
-use bootloader_api::BootInfo;
 
 
 pub fn init() {
     gdt::init();
     idt::init();
     interrupts::init();
+    syscall::init();
 }
