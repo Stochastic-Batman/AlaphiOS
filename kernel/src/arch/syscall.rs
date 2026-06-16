@@ -1,4 +1,4 @@
-use x86_64::registers::model_specific::{Efer, EferFlags, LStar, Star, SFMask};
+use x86_64::registers::model_specific::{Efer, EferFlags, LStar, SFMask};
 use x86_64::registers::rflags::RFlags;
 use x86_64::VirtAddr;
 
@@ -8,7 +8,23 @@ pub fn init() {
 
     let (kernel_cs, user_cs) = crate::arch::gdt::syscall_selectors();
 
-    unsafe { Star::write(user_cs, user_cs, kernel_cs, kernel_cs).unwrap(); }
+    unsafe {
+        // STAR MSR Address: 0xC0000081
+        // Bits 32-47: Kernel Segment Base (CS is this, DS/SS is this + 8)
+        // Bits 48-63: User Segment Base (CS is this + 16, SS is this + 8)
+        // We adjust the base inputs to satisfy how hardware parses the bit fields:
+        let kernel_base = kernel_cs.0;
+        let user_base = (user_cs.0 - 16) | 3; // Shift back so User CS hits target mapping
+
+        let msr_val = ((user_base as u64) << 48) | ((kernel_base as u64) << 32);
+        
+        core::arch::asm!(
+            "wrmsr",
+            in("ecx") 0xC0000081u32,
+            in("eax") (msr_val & 0xFFFF_FFFF) as u32,
+            in("edx") (msr_val >> 32) as u32,
+        );
+    }
 
     LStar::write(VirtAddr::new(syscall_entry as u64));
 
