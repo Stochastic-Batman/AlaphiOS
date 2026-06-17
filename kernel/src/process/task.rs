@@ -1,13 +1,14 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
+use crate::memory::vmm::Vmm;
 use crate::process::pid::{Pid, Tid};
 use x86_64::registers::control::Cr3;
 
 
 
 const KERNEL_STACK_SIZE: usize = 64 * 1024;
-static PREEMPT_COUNT: AtomicU32 = AtomicU32::new(0);  // stub: replaced by per-task field access via current_task() once the scheduler owns CURRENT.
+static PREEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
 
 
 #[unsafe(naked)]
@@ -39,6 +40,7 @@ pub struct Task {
     pub parent: Option<Pid>,
     pub children: Vec<Pid>,
     pub exit_code: Option<i32>,
+    pub vmm: Vmm,
     kernel_stack: Vec<u8>,
 }
 
@@ -61,6 +63,7 @@ impl Task {
             parent,
             children: Vec::new(),
             exit_code: None,
+            vmm: Vmm::new(),
             kernel_stack,
         }
     }

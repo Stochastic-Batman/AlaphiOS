@@ -11,8 +11,8 @@ pub trait FrameAlloc {
 }
 
 
-// Hands frames out sequentially; deallocate() is a no-op.
-// Replaced by a free-list allocator once VMM is implemented
+// Boot-time only. Used to map the heap before the free-list allocator exists.
+// deallocate() is a no-op; frames handed out here are permanent kernel mappings.
 pub struct BootFrameAllocator {
     regions: &'static MemoryRegions,
     next: usize,
@@ -36,6 +36,10 @@ impl BootFrameAllocator {
                 let end_frame = PhysFrame::containing_address(PhysAddr::new(r.end - 1));  // inclusive
                 PhysFrame::range_inclusive(start_frame, end_frame)
             })
+    }
+
+    pub fn frames_consumed(&self) -> usize {
+        self.next
     }
 }
 
