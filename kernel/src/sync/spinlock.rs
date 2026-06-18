@@ -23,7 +23,7 @@ pub struct Spinlock<T> {
 
 
 pub struct SpinlockGuard<'a, T> {
-    lock: &'a Spinlock<T>,
+    pub(crate) lock: &'a Spinlock<T>,
 }
 
 
