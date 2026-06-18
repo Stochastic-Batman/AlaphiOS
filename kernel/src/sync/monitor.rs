@@ -24,7 +24,7 @@ impl<T> Monitor<T> {
         self.lock.try_lock() 
     }
 
-    pub fn wait<'a>(&self, guard: SpinlockGuard<'a, T>) -> SpinlockGuard<'a, T> {
+    pub fn wait<'a>(&'a self, guard: SpinlockGuard<'a, T>) -> SpinlockGuard<'a, T> {
         self.cond.wait(guard)
     }
 
