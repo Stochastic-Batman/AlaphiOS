@@ -10,11 +10,11 @@ The kernel targets **QEMU x86-64 emulation exclusively** and is designed for the
 
 ## Before reading the source code
 
-Please read [`architectural_decisions.md`](./architectural_decisions.md). It documents every significant design choice made for this project, organised chapter-by-chapter alongside the "Dinosaur Book". Understanding *why* things are built the way they are is essential context for the *how*.
+Please read [`ArchitecturalDecisions.md`](./ArchitecturalDecisions.md). It documents every significant design choice made for this project, organised chapter-by-chapter alongside the "Dinosaur Book". Understanding *why* things are built the way they are is essential context for the *how*.
 
 ## Scope
 
-The following is a high-level summary of what AlaphiOS implements. All details and the reasoning behind each decision live in [`architectural_decisions.md`](./architectural_decisions.md).
+The following is a high-level summary of what AlaphiOS implements. All details and the reasoning behind each decision live in [`ArchitecturalDecisions.md`](./ArchitecturalDecisions.md).
 
 **Kernel & Processes**
 - Monolithic `#![no_std]` kernel, loaded via the Rust `bootloader` crate
@@ -73,31 +73,26 @@ The following is a high-level summary of what AlaphiOS implements. All details a
 
 ```
 alaphios/
-├── architectural_decisions.md   # Design decisions (read this first)
-├── Cargo.toml                   # Workspace manifest
-├── Cargo.lock
+├── ArchitecturalDecisions.md    # Design decisions (read this first)
+├── Cargo.toml/lock              # Workspace manifest
 ├── LICENSE                      # GNU GPL v3.0
 ├── README.md
+├── bootloader-config/           # bootloader crate configuration
 ├── kernel/                      # Kernel crate (#![no_std])
 │   ├── Cargo.toml
 │   └── src/
-│       ├── main.rs              # Kernel entry point (_start / kernel_main)
 │       ├── arch/                # x86-64-specific code
-│       │   ├── mod.rs
-│       │   ├── gdt.rs           # Global Descriptor Table
-│       │   ├── idt.rs           # Interrupt Descriptor Table
-│       │   ├── interrupts.rs    # FLIH / SLIH handlers
-│       │   └── paging.rs        # Page table management, TLB flush
-│       ├── process/             # PCB, task abstraction, fork/join
-│       ├── scheduler/           # MLFQ scheduler
-│       ├── memory/              # Buddy allocator, frame allocator, demand paging
-│       ├── sync/                # Spinlocks, mutexes, condition variables, monitors
-│       ├── ipc/                 # Message passing, shared memory, pipes
 │       ├── fs/                  # File system layers (logical → fatfs)
 │       ├── io/                  # Device drivers, interrupt-driven I/O, ioctl
+│       ├── ipc/                 # Message passing, shared memory, pipes
+│       ├── main.rs              # Kernel entry point (_start / kernel_main)
+│       ├── memory/              # Buddy allocator, frame allocator, demand paging
+│       ├── process/             # PCB, task abstraction, fork/join
+│       ├── scheduler/           # MLFQ scheduler
 │       ├── security/            # Access matrix, RBAC, auth.db interface
+│       ├── sync/                # Spinlocks, mutexes, condition variables, monitors
 │       └── syscall/             # Syscall dispatch table
-├── bootloader-config/           # bootloader crate configuration
+├── roadmap.md                   # What was done on each step of the project
 └── tools/                       # Host-side utilities (disk image creation, etc.)
 ```
 
@@ -160,15 +155,6 @@ cargo build
 Build + boot in QEMU:
 ```bash
 cargo run
-```
-
-Build + boot with GDB stub paused at entry:
-```bash
-ALAPHIOS_DEBUG=1 cargo run -p kernel
-```
-then in another terminal:
-```bash
-gdb -ex 'target remote :1234' target/x86_64-unknown-none/debug/kernel
 ```
 
 ## Reference
