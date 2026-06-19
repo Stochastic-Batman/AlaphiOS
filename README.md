@@ -92,7 +92,6 @@ alaphios/
 │       ├── security/            # Access matrix, RBAC, auth.db interface
 │       ├── sync/                # Spinlocks, mutexes, condition variables, monitors
 │       └── syscall/             # Syscall dispatch table
-├── roadmap.md                   # What was done on each step of the project
 └── tools/                       # Host-side utilities (disk image creation, etc.)
 ```
 
