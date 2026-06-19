@@ -7,6 +7,8 @@ use crate::scheduler;
 use crate::sync::spinlock::Spinlock;
 use crate::syscall::numbers::*;
 use crate::ipc::table::IPC_TABLE;
+use crate::fs;
+use crate::fs::vfs::FsError;
 
 
 // Standard Kernel Error Codes (Negative isize for ABI boundary)
@@ -16,15 +18,43 @@ const EFAULT: isize = -14;
 const EAGAIN: isize = -11;
 const EPIPE: isize = -32;
 const EMSGSIZE: isize = -90;
+const ENOENT: isize = -2;
+const EACCES: isize = -13;
+const EEXIST: isize = -17;
+const ENOTDIR: isize = -20;
+const EISDIR: isize = -21;
+const EBUSY: isize = -16;
+const EROFS: isize = -30;
 
 
 static SHM_REGISTRY: Lazy<Spinlock<BTreeMap<alloc::string::String, Arc<crate::ipc::shm::SharedMem>>>> = Lazy::new(|| Spinlock::new(BTreeMap::new()));
+
+
+fn fs_err(e: FsError) -> isize {
+    match e {
+        FsError::NotFound => ENOENT,
+        FsError::AlreadyExists => EEXIST,
+        FsError::PermissionDenied => EACCES,
+        FsError::Locked => EBUSY,
+        FsError::IsShared => EROFS,
+        FsError::NotOpen => EBADF,
+        FsError::InvalidPath => EFAULT,
+    }
+}
+
+
+unsafe fn str_from_user(ptr: usize, len: usize) -> Option<&'static str> {
+    if ptr == 0 || len == 0 { return None; }
+    let slice = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
+    core::str::from_utf8(slice).ok()
+}
 
 
 // Hardware saves RIP -> RCX, RFLAGS -> R11 and swaps CS/SS.
 // Syscall ABI: nr=RAX, args=RDI RSI RDX R10 R8 R9
 // C call ABI:  args=RDI RSI RDX RCX R8 R9
 // Only mismatch is arg3: move R10 -> RCX before the call.
+// Most of the stuff below is written by with the help of Claude Sonnet 4.6
 #[unsafe(no_mangle)]
 pub extern "C" fn syscall_handler(nr: usize, arg0: usize, arg1: usize, arg2: usize, _arg3: usize, _arg4: usize) -> isize {
     match nr {
@@ -122,6 +152,143 @@ pub extern "C" fn syscall_handler(nr: usize, arg0: usize, arg1: usize, arg2: usi
             let handle = arg0 as u64;
             IPC_TABLE.lock().remove(handle);
             0
+        }
+        SYS_OPEN => {
+            let path = unsafe { str_from_user(arg0, arg1) };
+            match path {
+                None => EFAULT,
+                Some(p) => {
+                    let pid = scheduler::current_pid();
+                    match fs::FS.lock().open(p, pid) {
+                        Ok(fd) => fd as isize,
+                        Err(e) => fs_err(e),
+                    }
+                }
+            }
+        }
+        SYS_CLOSE => {
+            let pid = scheduler::current_pid();
+            match fs::FS.lock().close(arg0 as u64, pid) {
+                Ok(()) => 0,
+                Err(e) => fs_err(e),
+            }
+        }
+        SYS_READ => {
+            let buf_ptr = arg1 as *mut u8;
+            let len = arg2;
+            if len > 0 && buf_ptr.is_null() { return EFAULT; }
+            let pid = scheduler::current_pid();
+            let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, len) };
+            match fs::FS.lock().read(arg0 as u64, pid, buf) {
+                Ok(n)  => n as isize,
+                Err(e) => fs_err(e),
+            }
+        }
+        SYS_WRITE => {
+            let buf_ptr = arg1 as *const u8;
+            let len = arg2;
+            if len > 0 && buf_ptr.is_null() { return EFAULT; }
+            let pid = scheduler::current_pid();
+            let buf = unsafe { core::slice::from_raw_parts(buf_ptr, len) };
+            match fs::FS.lock().write(arg0 as u64, pid, buf) {
+                Ok(n)  => n as isize,
+                Err(e) => fs_err(e),
+            }
+        }
+        SYS_SEEK => {
+            let pid = scheduler::current_pid();
+            match fs::FS.lock().seek(arg0 as u64, pid, arg1 as u64) {
+                Ok(()) => 0,
+                Err(e) => fs_err(e),
+            }
+        }
+        SYS_CREATE => {
+            let path = unsafe { str_from_user(arg0, arg1) };
+            match path {
+                None => EFAULT,
+                Some(p) => {
+                    let pid = scheduler::current_pid();
+                    match fs::FS.lock().create(p, pid) {
+                        Ok(()) => 0,
+                        Err(e) => fs_err(e),
+                    }
+                }
+            }
+        }
+        SYS_DELETE => {
+            let path = unsafe { str_from_user(arg0, arg1) };
+            match path {
+                None => EFAULT,
+                Some(p) => match fs::FS.lock().delete(p) {
+                    Ok(()) => 0,
+                    Err(e) => fs_err(e),
+                }
+            }
+        }
+        SYS_RENAME => {
+            let old = unsafe { str_from_user(arg0, arg1) };
+            let new = unsafe { str_from_user(arg2, _arg3) };
+            match (old, new) {
+                (Some(o), Some(n)) => match fs::FS.lock().rename(o, n) {
+                    Ok(()) => 0,
+                    Err(e) => fs_err(e),
+                },
+                _ => EFAULT,
+            }
+        }
+        SYS_MKDIR => {
+            let path = unsafe { str_from_user(arg0, arg1) };
+            match path {
+                None => EFAULT,
+                Some(p) => match fs::FS.lock().mkdir(p) {
+                    Ok(()) => 0,
+                    Err(e) => fs_err(e),
+                }
+            }
+        }
+        SYS_RMDIR => {
+            let path = unsafe { str_from_user(arg0, arg1) };
+            match path {
+                None => EFAULT,
+                Some(p) => match fs::FS.lock().rmdir(p) {
+                    Ok(()) => 0,
+                    Err(e) => fs_err(e),
+                }
+            }
+        }
+        SYS_CHMOD => {
+            let path = unsafe { str_from_user(arg0, arg1) };
+            match path {
+                None => EFAULT,
+                Some(p) => {
+                    let bits = arg2 as u8;
+                    let owner = (bits >> 6) & 0b111;
+                    let group = (bits >> 3) & 0b111;
+                    let world =  bits       & 0b111;
+                    match fs::FS.lock().chmod(p, owner, group, world) {
+                        Ok(()) => 0,
+                        Err(e) => fs_err(e),
+                    }
+                }
+            }
+        }
+        SYS_MARK_SHARED => {
+            let path = unsafe { str_from_user(arg0, arg1) };
+            match path {
+                None => EFAULT,
+                Some(p) => match fs::FS.lock().mark_shared(p) {
+                    Ok(()) => 0,
+                    Err(e) => fs_err(e),
+                }
+            }
+        }
+        SYS_LOGIN => {
+            let pwd_ptr = arg1 as *const u8;
+            let pwd_len = arg2;
+            if pwd_ptr.is_null() || pwd_len == 0 { return EFAULT; }
+            let pwd = unsafe { core::slice::from_raw_parts(pwd_ptr, pwd_len) };
+            let ok = fs::FS.lock().verify_password(arg0 as u32, pwd);
+            if ok { 0 } else { EACCES }
         }
         _ => ENOSYS,
     }
