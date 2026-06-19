@@ -98,11 +98,19 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         serial_println!("heap: {:x} @ {:p}", *probe, probe);
     }
 
+    io_smoke_test();
+    serial_println!("io smoke test done");
 
     scheduler::init();
+
+    fs_smoke_test();
+    serial_println!("fs smoke test done");
+    
     use crate::process::task::Task;
-    scheduler::spawn(Task::new(scheduler_smoke_a, 0, None));
-    scheduler::spawn(Task::new(scheduler_smoke_b, 0, None));
+   // scheduler::spawn(Task::new(scheduler_smoke_a, 0, None));
+   // scheduler::spawn(Task::new(scheduler_smoke_b, 0, None));
+    scheduler::spawn(Task::new(ping_pong_a, 0, None));
+    scheduler::spawn(Task::new(ping_pong_b, 0, None));
     serial_println!("scheduler smote tests passed");
 
     serial_println!("boot complete, entering idle loop");
@@ -131,6 +139,71 @@ fn scheduler_smoke_b() -> ! {
         }
     }
 }
+
+fn io_smoke_test() {
+    use crate::io::disk::DiskDevice;
+
+    let mut disk = crate::io::disk::RamDisk::new(16, 512);
+    let mut write_buf = [0u8; 512];
+    for (i, b) in write_buf.iter_mut().enumerate() {
+        *b = (i % 256) as u8;
+    }
+
+    disk.write_sector(3, &write_buf).expect("ramdisk write failed");
+    let mut read_buf = [0u8; 512];
+    disk.read_sector(3, &mut read_buf).expect("ramdisk read failed");
+
+    assert_eq!(write_buf, read_buf, "ramdisk roundtrip mismatch");
+    serial_println!("io smoke test passed: sector roundtrip ok");
+}
+
+fn fs_smoke_test() {
+    let pid = scheduler::current_pid();
+    let mut fs = crate::fs::FS.lock();
+
+    let fd = fs.create("/hello.txt", pid).expect("create failed");
+    fs.write(fd, pid, b"hi").expect("write failed");
+    fs.close(fd, pid).expect("close failed");
+
+    serial_println!("fs smoke test passed: fcb/lock layer ok (fatfs I/O not wired yet)");
+}
+
+
+struct PingPongState { turn: u8, count: u32 }
+
+static PING_PONG: crate::sync::monitor::Monitor<PingPongState> =
+    crate::sync::monitor::Monitor::new(PingPongState { turn: 0, count: 0 });
+
+const PING_PONG_HANDOFFS: u32 = 20;
+
+fn ping_pong_task(my_turn: u8) -> ! {
+    loop {
+        let mut guard = PING_PONG.lock();
+        while guard.turn != my_turn {
+            guard = PING_PONG.wait(guard);
+        }
+
+        guard.count += 1;
+        let done = guard.count >= PING_PONG_HANDOFFS;
+        guard.turn = 1 - my_turn;
+
+        if done {
+            serial_println!("scheduler/monitor smoke test passed: {} handoffs", guard.count);
+        }
+
+        PING_PONG.broadcast();
+        core::mem::drop(guard);
+
+        if done {
+            crate::process::lifecycle::exit(0);
+        }
+    }
+}
+
+fn ping_pong_a() -> ! { ping_pong_task(0) }
+fn ping_pong_b() -> ! { ping_pong_task(1) }
+
+
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {

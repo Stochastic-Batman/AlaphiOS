@@ -209,7 +209,7 @@ pub extern "C" fn syscall_handler(nr: usize, arg0: usize, arg1: usize, arg2: usi
                 Some(p) => {
                     let pid = scheduler::current_pid();
                     match fs::FS.lock().create(p, pid) {
-                        Ok(()) => 0,
+                        Ok(fd) => fd as isize,
                         Err(e) => fs_err(e),
                     }
                 }

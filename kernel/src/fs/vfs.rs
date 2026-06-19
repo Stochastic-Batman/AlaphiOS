@@ -132,14 +132,19 @@ impl LogicalFs {
         Ok(())
     }
 
-    pub fn create(&mut self, path: &str, pid: Pid) -> Result<(), FsError> {
+    pub fn create(&mut self, path: &str, pid: Pid) -> Result<u64, FsError> {
         if self.case_conflict(path) {
             return Err(FsError::AlreadyExists);
         }
+    
         let fcb = self.fcbs.open(path);
+        if fcb.locked_by.is_some() {
+            return Err(FsError::Locked);
+        }
+
         fcb.locked_by = Some(pid);
         fcb.open_count += 1;
-        Ok(())
+        Ok(self.fds.table_for(pid).alloc(path.into()))
     }
 
     pub fn delete(&mut self, path: &str) -> Result<(), FsError> {
