@@ -39,4 +39,8 @@ impl FcbTable {
     pub fn remove(&mut self, path: &str) {
         self.map.remove(path);
     }
+
+    pub fn paths(&self) -> impl Iterator<Item = &str> {
+        self.map.keys().map(|s| s.as_str())
+    }
 }

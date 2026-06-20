@@ -27,6 +27,7 @@ const ENOTDIR: isize = -20;
 const EISDIR: isize = -21;
 const EBUSY: isize = -16;
 const EROFS: isize = -30;
+const ENODEV: isize = -19;
 
 
 static SHM_REGISTRY: Lazy<Spinlock<BTreeMap<alloc::string::String, Arc<crate::ipc::shm::SharedMem>>>> = Lazy::new(|| Spinlock::new(BTreeMap::new()));
@@ -41,6 +42,9 @@ fn fs_err(e: FsError) -> isize {
         FsError::IsShared => EROFS,
         FsError::NotOpen => EBADF,
         FsError::InvalidPath => EFAULT,
+        FsError::NotADirectory => ENOTDIR,
+        FsError::IsADirectory => EISDIR,
+        FsError::NotMounted => ENODEV,
     }
 }
 
@@ -327,6 +331,59 @@ pub extern "C" fn syscall_handler(nr: usize, arg0: usize, arg1: usize, arg2: usi
                 Some(p) => match fs::FS.lock().mark_shared(p) {
                     Ok(()) => 0,
                     Err(e) => fs_err(e),
+                }
+            }
+        }
+        SYS_GETDENTS => {
+            let path = unsafe { str_from_user(arg0, arg1) };
+            let buf_ptr = arg2 as *mut u8;
+            let buf_len = _arg3;
+
+            let Some(p) = path else { return EFAULT };
+            if buf_len > 0 && buf_ptr.is_null() { return EFAULT; }
+
+            match fs::FS.lock().getdents(p) {
+                Ok(entries) => {
+                    const NAME_MAX: usize = 64;
+                    const RECORD_SIZE: usize = NAME_MAX + 1;
+
+                    let capacity = buf_len / RECORD_SIZE;
+                    let n = entries.len().min(capacity);
+
+                    for (i, (name, is_dir)) in entries.iter().take(n).enumerate() {
+                        let record = unsafe { buf_ptr.add(i * RECORD_SIZE) };
+                        let name_bytes = name.as_bytes();
+                        let copy_len = name_bytes.len().min(NAME_MAX);
+
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(name_bytes.as_ptr(), record, copy_len);
+                            if copy_len < NAME_MAX {
+                                core::ptr::write_bytes(record.add(copy_len), 0, NAME_MAX - copy_len);
+                            }
+                            record.add(NAME_MAX).write(*is_dir as u8);
+                        }
+                    }
+
+                    n as isize
+                }
+                Err(e) => fs_err(e),
+            }
+        }
+        SYS_STAT => {
+            let path = unsafe { str_from_user(arg0, arg1) };
+            let out_ptr = arg2 as *mut u8;
+
+            match path {
+                None => EFAULT,
+                Some(p) => {
+                    if out_ptr.is_null() { return EFAULT; }
+                    match fs::FS.lock().stat(p) {
+                        Ok(s) => {
+                            unsafe { s.write_to_user(out_ptr) };
+                            0
+                        }
+                        Err(e) => fs_err(e),
+                    }
                 }
             }
         }

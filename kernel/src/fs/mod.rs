@@ -2,6 +2,8 @@ pub mod fat;
 pub mod fcb;
 pub mod fd_table;
 pub mod overlay;
+pub mod stat;
+pub mod system_domain;
 pub mod vfs;
 
 use spin::Lazy;

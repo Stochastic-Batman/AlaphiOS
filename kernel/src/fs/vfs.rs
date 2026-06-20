@@ -1,6 +1,12 @@
+use alloc::string::String;
+use alloc::vec::Vec;
+use fatfs::{Read, Seek, SeekFrom, Write};
+use crate::fs::fat::FatFs;
 use crate::fs::fcb::FcbTable;
 use crate::fs::fd_table::FdRegistry;
 use crate::fs::overlay::{AuthDb, PermsDb, Rwx};
+use crate::fs::stat::Stat;
+use crate::io::disk::RamDisk;
 use crate::process::pid::Pid;
 
 
@@ -13,6 +19,9 @@ pub enum FsError {
     IsShared,  // write attempted on immutable-shared file
     NotOpen,
     InvalidPath,
+    NotADirectory,
+    IsADirectory,
+    NotMounted,
 }
 
 
@@ -21,6 +30,7 @@ pub struct LogicalFs {
     fds: FdRegistry,
     pub perms: PermsDb,
     pub auth: AuthDb,
+    disk: Option<FatFs<RamDisk>>,
 }
 
 impl LogicalFs {
@@ -30,23 +40,46 @@ impl LogicalFs {
             fds: FdRegistry::new(),
             perms: PermsDb::new(),
             auth: AuthDb::new(),
+            disk: None,
         }
     }
 
-    // fatfs stores names via LFN.
-    // We must reject opens whose name differs only in case from an existing entry.
-    // Because we have no directory cache yet, we check the FCB table which holds every currently-open path.
-    // A full implementation scans the fatfs directory. 
-    // The FCB check is the kernel-enforced layer that matters at the syscall boundary.
-    fn case_conflict(&self, path: &str) -> bool {
-        let lower = path.to_lowercase();
-        // For now this is a placeholder: real impl iterates fcbs.map.keys().
-        let _ = lower;
-        false  // TODO: iterate FCB keys and compare lowercased
+    // called once from kernel_main after the boot RamDisk has been formatted and mounted. 
+    // everything before this point (create/open/etc. called pre-mount) returns FsError::NotMounted.
+    pub fn mount_disk(&mut self, disk: FatFs<RamDisk>) {
+        self.disk = Some(disk);
     }
 
-    // --- Permission check helper (Decision 92) ---
-    fn check_perm(&self, path: &str, pid: Pid, want_write: bool) -> Result<(), FsError> {
+    pub fn disk(&self) -> Option<&FatFs<RamDisk>> {
+        self.disk.as_ref()
+    }
+
+    // boot loader needs simultaneous &disk and &mut auth/&mut perms. 
+    pub fn disk_and_overlays_mut(&mut self) -> Option<(&FatFs<RamDisk>, &mut AuthDb, &mut PermsDb)> {
+        let disk = self.disk.as_ref()?;
+        Some((disk, &mut self.auth, &mut self.perms))
+    }
+
+    fn disk_mut(&mut self) -> Result<&mut FatFs<RamDisk>, FsError> {
+        self.disk.as_mut().ok_or(FsError::NotMounted)
+    }
+
+    fn to_fat_path(path: &str) -> Result<&str, FsError> {
+        if !path.starts_with('/') {
+            return Err(FsError::InvalidPath);
+        }
+        Ok(path.trim_start_matches('/'))
+    }
+
+    // fatfs stores names via LFN. 
+    // reject opens/creates whose name differs only in case from an existing open FCB entry. 
+    // this only catches conflicts among currently-open files.
+    fn case_conflict(&self, path: &str) -> bool {
+        let lower = path.to_lowercase();
+        self.fcbs.paths().any(|p| p != path && p.to_lowercase() == lower)
+    }
+
+    fn check_perm(&self, path: &str, _pid: Pid, want_write: bool) -> Result<(), FsError> {
         let Some(entry) = self.perms.get(path) else { return Ok(()) };
         if want_write && !entry.world_rwx.can_write() {
             return Err(FsError::PermissionDenied);
@@ -64,13 +97,18 @@ impl LogicalFs {
         }
 
         self.check_perm(path, pid, false)?;
-        let fcb = self.fcbs.open(path);
 
-        // Mandatory exclusive lock
+        let fat_path = Self::to_fat_path(path)?;
+        {
+            let disk = self.disk_mut()?;
+            disk.root_dir().open_file(fat_path).map_err(|_| FsError::NotFound)?;
+        }
+
+        let fcb = self.fcbs.open(path);
         if fcb.locked_by.is_some() {
             return Err(FsError::Locked);
         }
-       
+
         fcb.locked_by = Some(pid);
         fcb.open_count += 1;
         let fd = self.fds.table_for(pid).alloc(path.into());
@@ -97,19 +135,23 @@ impl LogicalFs {
         let path = self.fds.table_for(pid).get(fd).map(|e| e.path.clone()).ok_or(FsError::NotOpen)?;
         self.check_perm(&path, pid, false)?;
 
-        let fcb = self.fcbs.get_mut(&path).ok_or(FsError::NotOpen)?;
-        // Actual read deferred to the FAT layer via the cursor.
-        // cursor advances here; fatfs call happens in the FS syscall handler
-        // which has access to the FatFs<D> instance.
-        let _ = (buf, fcb);
+        let cursor = self.fcbs.get_mut(&path).ok_or(FsError::NotOpen)?.cursor;
+        let fat_path = Self::to_fat_path(&path)?;
 
-        Ok(0)  // placeholder; wired in dispatch.rs
+        let n = {
+            let disk = self.disk_mut()?;
+            let mut file = disk.root_dir().open_file(fat_path).map_err(|_| FsError::NotFound)?;
+            file.seek(SeekFrom::Start(cursor)).map_err(|_| FsError::InvalidPath)?;
+            file.read(buf).map_err(|_| FsError::InvalidPath)?
+        };
+
+        self.fcbs.get_mut(&path).ok_or(FsError::NotOpen)?.cursor = cursor + n as u64;
+        Ok(n)
     }
 
     pub fn write(&mut self, fd: u64, pid: Pid, buf: &[u8]) -> Result<usize, FsError> {
         let path = self.fds.table_for(pid).get(fd).map(|e| e.path.clone()).ok_or(FsError::NotOpen)?;
 
-        // Reject writes to immutable-shared files before lock check.
         {
             let fcb = self.fcbs.get_mut(&path).ok_or(FsError::NotOpen)?;
             if fcb.is_shared {
@@ -118,11 +160,20 @@ impl LogicalFs {
         }
         self.check_perm(&path, pid, true)?;
 
-        let fcb = self.fcbs.get_mut(&path).ok_or(FsError::NotOpen)?;
-        fcb.dirty = true;
-        let _ = buf;
+        let cursor = self.fcbs.get_mut(&path).ok_or(FsError::NotOpen)?.cursor;
+        let fat_path = Self::to_fat_path(&path)?;
 
-        Ok(0)  // placeholder
+        {
+            let disk = self.disk_mut()?;
+            let mut file = disk.root_dir().open_file(fat_path).map_err(|_| FsError::NotFound)?;
+            file.seek(SeekFrom::Start(cursor)).map_err(|_| FsError::InvalidPath)?;
+            file.write_all(buf).map_err(|_| FsError::InvalidPath)?;
+        }
+
+        let fcb = self.fcbs.get_mut(&path).ok_or(FsError::NotOpen)?;
+        fcb.cursor = cursor + buf.len() as u64;
+        fcb.dirty = true;
+        Ok(buf.len())
     }
 
     pub fn seek(&mut self, fd: u64, pid: Pid, offset: u64) -> Result<(), FsError> {
@@ -136,7 +187,13 @@ impl LogicalFs {
         if self.case_conflict(path) {
             return Err(FsError::AlreadyExists);
         }
-    
+
+        let fat_path = Self::to_fat_path(path)?;
+        {
+            let disk = self.disk_mut()?;
+            disk.root_dir().create_file(fat_path).map_err(|_| FsError::InvalidPath)?;
+        }
+
         let fcb = self.fcbs.open(path);
         if fcb.locked_by.is_some() {
             return Err(FsError::Locked);
@@ -148,12 +205,16 @@ impl LogicalFs {
     }
 
     pub fn delete(&mut self, path: &str) -> Result<(), FsError> {
-        // Immutable-shared files cannot be deleted, and their name cannot be reused after deletion
         if let Some(fcb) = self.fcbs.get_mut(path) {
             if fcb.is_shared {
                 return Err(FsError::IsShared);
             }
         }
+
+        let fat_path = Self::to_fat_path(path)?;
+        let disk = self.disk_mut()?;
+        disk.root_dir().remove(fat_path).map_err(|_| FsError::NotFound)?;
+
         self.fcbs.remove(path);
         self.perms.remove(path);
         Ok(())
@@ -179,21 +240,113 @@ impl LogicalFs {
     }
 
     pub fn rename(&mut self, old: &str, new: &str) -> Result<(), FsError> {
-        if self.case_conflict(new) { return Err(FsError::AlreadyExists); }
-        if let Some(fcb) = self.fcbs.get_mut(old) {
-            if fcb.is_shared { return Err(FsError::IsShared); }
+        if self.case_conflict(new) {
+            return Err(FsError::AlreadyExists);
         }
+        if let Some(fcb) = self.fcbs.get_mut(old) {
+            if fcb.is_shared {
+                return Err(FsError::IsShared);
+            }
+        }
+
+        let old_fat = Self::to_fat_path(old)?;
+        let new_fat = Self::to_fat_path(new)?;
+        let disk = self.disk_mut()?;
+        let root = disk.root_dir();
+        root.rename(old_fat, &root, new_fat).map_err(|_| FsError::NotFound)?;
+
         Ok(())
     }
 
     pub fn mkdir(&mut self, path: &str) -> Result<(), FsError> {
-        if self.case_conflict(path) { return Err(FsError::AlreadyExists); }
-        // fatfs: root_dir().create_dir(path)
+        if self.case_conflict(path) {
+            return Err(FsError::AlreadyExists);
+        }
+
+        let fat_path = Self::to_fat_path(path)?;
+        let disk = self.disk_mut()?;
+        disk.root_dir().create_dir(fat_path).map_err(|_| FsError::AlreadyExists)?;
         Ok(())
     }
 
     pub fn rmdir(&mut self, path: &str) -> Result<(), FsError> {
-        // fatfs: root_dir().remove(path)
+        // deleting a non-empty directory recursively deletes its contents. 
+        // fatfs::Dir::remove refuses non-empty directories, so we recurse manually first.
+        let fat_path = Self::to_fat_path(path)?;
+        self.remove_dir_recursive(fat_path)
+    }
+
+    fn remove_dir_recursive(&mut self, fat_path: &str) -> Result<(), FsError> {
+        let entries: Vec<(String, bool)> = {
+            let disk = self.disk_mut()?;
+            let dir = disk.root_dir().open_dir(fat_path).map_err(|_| FsError::NotFound)?;
+            dir.iter()
+                .filter_map(|r| r.ok())
+                .map(|e| (e.file_name(), e.is_dir()))
+                .filter(|(name, _)| name != "." && name != "..")
+                .collect()
+        };
+
+        for (name, is_dir) in entries {
+            let mut child_path = String::from(fat_path);
+            if !child_path.is_empty() {
+                child_path.push('/');
+            }
+            child_path.push_str(&name);
+
+            if is_dir {
+                self.remove_dir_recursive(&child_path)?;
+            } else {
+                let disk = self.disk_mut()?;
+                disk.root_dir().remove(&child_path).map_err(|_| FsError::NotFound)?;
+            }
+        }
+
+        let disk = self.disk_mut()?;
+        disk.root_dir().remove(fat_path).map_err(|_| FsError::NotFound)?;
         Ok(())
+    }
+
+    // directory listing backing SYS_GETDENTS.
+    pub fn getdents(&mut self, path: &str) -> Result<Vec<(String, bool)>, FsError> {
+        let fat_path = Self::to_fat_path(path)?;
+        let disk = self.disk_mut()?;
+        let dir = disk.root_dir().open_dir(fat_path).map_err(|_| FsError::NotFound)?;
+
+        Ok(dir.iter()
+            .filter_map(|r| r.ok())
+            .map(|e| (e.file_name(), e.is_dir()))
+            .filter(|(name, _)| name != "." && name != "..")
+            .collect())
+    }
+
+    // file metadata. Size and is_dir come from fatfs.
+    // ownership/permission bits come from the kernel-managed overlay, defaulting to "no restriction recorded" when absent.
+    pub fn stat(&mut self, path: &str) -> Result<Stat, FsError> {
+        let fat_path = Self::to_fat_path(path)?;
+
+        let (size, is_dir) = {
+            let disk = self.disk_mut()?;
+            let root = disk.root_dir();
+
+            if let Ok(mut file) = root.open_file(fat_path) {
+                let size = file.seek(SeekFrom::End(0)).map_err(|_| FsError::InvalidPath)?;
+                (size, false)
+            } else if root.open_dir(fat_path).is_ok() {
+                (0, true)
+            } else {
+                return Err(FsError::NotFound);
+            }
+        };
+
+        let mut s = Stat { size, is_dir: is_dir as u8, ..Default::default() };
+        if let Some(entry) = self.perms.get(path) {
+            s.uid = entry.uid;
+            s.gid = entry.gid;
+            s.owner_rwx = entry.owner_rwx.0;
+            s.group_rwx = entry.group_rwx.0;
+            s.world_rwx = entry.world_rwx.0;
+        }
+        Ok(s)
     }
 }

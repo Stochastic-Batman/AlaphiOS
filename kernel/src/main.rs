@@ -33,7 +33,7 @@ mod syscall;
 static SERIAL: Mutex<SerialPort> = unsafe {
     // SAFETY: 0x3F8 is the standard COM1 base address; nothing else in the
     // kernel touches this port. `SerialPort::new` is a const fn that only
-    // stores the address — no I/O happens until `init()` is called below.
+    // stores the address - no I/O happens until `init()` is called below.
     Mutex::new(SerialPort::new(0x3F8))
 };
 
@@ -100,6 +100,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     io_smoke_test();
     serial_println!("io smoke test done");
+
+    mount_boot_disk();
+    serial_println!("fat32 mount done");
+
+    load_system_domain();
+    serial_println!("/.system/ load done");
 
     scheduler::init();
 
@@ -169,6 +175,29 @@ fn io_smoke_test() {
     serial_println!("io smoke test passed: sector roundtrip ok");
 }
 
+// the kernel-resident FAT32 system partition. 
+// A real disk image isn't available under QEMU in this project, so the "system partition" is a RamDisk formatted fresh on every boot.
+// 64 MiB clears FAT32's minimum cluster-count requirement with room to spare.
+const BOOT_DISK_SECTOR_SIZE: usize = 512;
+const BOOT_DISK_SECTOR_COUNT: usize = (64 * 1024 * 1024) / BOOT_DISK_SECTOR_SIZE;
+
+fn mount_boot_disk() {
+    use crate::io::disk::RamDisk;
+    use crate::fs::fat::FatFs;
+
+    let disk = RamDisk::new(BOOT_DISK_SECTOR_COUNT, BOOT_DISK_SECTOR_SIZE);
+    let fatfs = FatFs::format_and_mount(disk).expect("failed to format/mount boot FAT32 volume");
+
+    fs::FS.lock().mount_disk(fatfs);
+}
+
+// load auth.db / perms.db from /.system/ into kernel memory at boot. checker runs as part of this load
+fn load_system_domain() {
+    let mut guard = fs::FS.lock();
+    let (disk, auth, perms) = guard.disk_and_overlays_mut().expect("disk must be mounted before loading /.system/");
+    fs::system_domain::load_at_boot(disk, auth, perms);
+}
+
 fn fs_smoke_test() {
     let pid = scheduler::current_pid();
     let mut fs = crate::fs::FS.lock();
@@ -177,14 +206,19 @@ fn fs_smoke_test() {
     fs.write(fd, pid, b"hi").expect("write failed");
     fs.close(fd, pid).expect("close failed");
 
-    serial_println!("fs smoke test passed: fcb/lock layer ok (fatfs I/O not wired yet)");
+    let fd = fs.open("/hello.txt", pid).expect("reopen failed");
+    let mut buf = [0u8; 2];
+    fs.read(fd, pid, &mut buf).expect("read failed");
+    assert_eq!(&buf, b"hi", "fs roundtrip mismatch");
+    fs.close(fd, pid).expect("close failed");
+
+    serial_println!("fs smoke test passed: fatfs roundtrip ok");
 }
 
 
 struct PingPongState { turn: u8, count: u32 }
 
-static PING_PONG: crate::sync::monitor::Monitor<PingPongState> =
-    crate::sync::monitor::Monitor::new(PingPongState { turn: 0, count: 0 });
+static PING_PONG: crate::sync::monitor::Monitor<PingPongState> = crate::sync::monitor::Monitor::new(PingPongState { turn: 0, count: 0 });
 
 const PING_PONG_HANDOFFS: u32 = 20;
 
@@ -219,7 +253,7 @@ fn ping_pong_b() -> ! { ping_pong_task(1) }
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    // Do not call any allocator or scheduler code here — the system may be
+    // Do not call any allocator or scheduler code here - the system may be
     // in an inconsistent state. Serial I/O is safe because _print only takes
     // a spinlock and writes to a hardware register.
     serial_println!("KERNEL PANIC: {}", info);

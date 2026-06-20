@@ -7,7 +7,7 @@ use crate::memory::buddy_allocator::LockedBuddyAllocator;
 
 
 pub const HEAP_START: usize = 0xFFFF_C000_0000_0000;
-pub const HEAP_SIZE: usize = 8 * 1024 * 1024;
+pub const HEAP_SIZE: usize = 96 * 1024 * 1024;
 
 #[global_allocator]
 static ALLOCATOR: LockedBuddyAllocator = LockedBuddyAllocator::new();

@@ -1,4 +1,4 @@
-use fatfs::{DefaultTimeProvider, FileSystem, FsOptions, IoBase, LossyOemCpConverter, Read, Seek, SeekFrom, Write};
+use fatfs::{DefaultTimeProvider, FileSystem, FormatVolumeOptions, FsOptions, IoBase, LossyOemCpConverter, Read, Seek, SeekFrom, Write};
 use crate::io::disk::DiskDevice;
 
 
@@ -73,13 +73,20 @@ impl<D: DiskDevice> Write for DiskIo<D> {
             let lba = self.pos / sector_size;
             let offset_in_sector = (self.pos % sector_size) as usize;
 
-            self.dev.read_sector(lba, &mut self.sector_buf).map_err(|_| FatIoError)?;
-
             let available = sector_size as usize - offset_in_sector;
             let to_copy = core::cmp::min(available, buf.len() - bytes_written);
-            
-            self.sector_buf[offset_in_sector..offset_in_sector + to_copy].copy_from_slice(&buf[bytes_written..bytes_written + to_copy]);
-            self.dev.write_sector(lba, &self.sector_buf).map_err(|_| FatIoError)?;
+            let whole_sector = offset_in_sector == 0 && to_copy == sector_size as usize;
+
+            if whole_sector {
+                // Full, aligned sector: write straight from the caller's buffer, skipping the read-modify-write round trip.
+                // format_volume issues mostly whole-sector writes, so this is the hot path that matters for boot-time format speed.
+                self.dev.write_sector(lba, &buf[bytes_written..bytes_written + to_copy]).map_err(|_| FatIoError)?;
+            } else {
+                self.dev.read_sector(lba, &mut self.sector_buf).map_err(|_| FatIoError)?;
+                self.sector_buf[offset_in_sector..offset_in_sector + to_copy].copy_from_slice(&buf[bytes_written..bytes_written + to_copy]);
+                self.dev.write_sector(lba, &self.sector_buf).map_err(|_| FatIoError)?;
+            }
+
             bytes_written += to_copy;
             self.pos += to_copy as u64;
         }
@@ -118,7 +125,30 @@ impl<D: DiskDevice> FatFs<D> {
         Ok(Self { inner: fs })
     }
 
+    // Lays down a fresh FAT32 volume on `dev`.
+    // used once at boot since the RamDisk starts as raw zeroed bytes, not a preformatted image.
+    pub fn format_and_mount(dev: D) -> Result<Self, FatIoError> {
+        let mut io = DiskIo::new(dev);
+        io.seek(SeekFrom::Start(0)).map_err(|_| FatIoError)?;
+        fatfs::format_volume(&mut io, FormatVolumeOptions::new()).map_err(|_| FatIoError)?;
+        io.seek(SeekFrom::Start(0)).map_err(|_| FatIoError)?;
+
+        let fs = FileSystem::new(io, FsOptions::new()).map_err(|_| FatIoError)?;
+        let instance = Self { inner: fs };
+        instance.ensure_system_dir()?;
+        Ok(instance)
+    }
+
     pub fn root_dir(&self) -> FatDir<'_, D> { 
         self.inner.root_dir()
+    }
+
+    // .system/ must exist before auth.db / perms.db can be created.
+    fn ensure_system_dir(&self) -> Result<(), FatIoError> {
+        match self.inner.root_dir().create_dir(".system") {
+            Ok(_) => Ok(()),
+            Err(fatfs::Error::AlreadyExists) => Ok(()),
+            Err(_) => Err(FatIoError),
+        }
     }
 }
