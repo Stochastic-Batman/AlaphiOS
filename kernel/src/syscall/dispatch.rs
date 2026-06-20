@@ -5,6 +5,8 @@ use crate::process::lifecycle;
 use crate::process::pid::Pid;
 use crate::scheduler;
 use crate::sync::spinlock::Spinlock;
+use crate::sync::resource::{LockHandle, QueuedResource};
+use crate::sync::resource_table::RESOURCE_TABLE;
 use crate::syscall::numbers::*;
 use crate::ipc::table::IPC_TABLE;
 use crate::fs;
@@ -67,6 +69,52 @@ pub extern "C" fn syscall_handler(nr: usize, arg0: usize, arg1: usize, arg2: usi
         }
         SYS_EXIT    => lifecycle::exit(arg0 as i32),
         SYS_WAITPID => lifecycle::wait(Pid::from_u64(arg0 as u64)) as isize,
+        SYS_GETRESOURCE => {
+            let res: Arc<dyn LockHandle> = Arc::new(QueuedResource::new());
+            RESOURCE_TABLE.lock().insert(res) as isize
+        }
+        SYS_MUTEX_LOCK => {
+            let res = RESOURCE_TABLE.lock().get(arg0 as u64);
+            match res {
+                Some(res) => { res.lock(); 0 }
+                None => EBADF,
+            }
+        }
+        SYS_MUTEX_TRYLOCK | SYS_TRYLOCK => {
+            let res = RESOURCE_TABLE.lock().get(arg0 as u64);
+            match res {
+                Some(res) => if res.try_lock() { 0 } else { EAGAIN },
+                None => EBADF,
+            }
+        }
+        SYS_MUTEX_UNLOCK => {
+            let res = RESOURCE_TABLE.lock().get(arg0 as u64);
+            match res {
+                Some(res) => { res.unlock(); 0 }
+                None => EBADF,
+            }
+        }
+        SYS_CONDVAR_WAIT => {
+            let res = RESOURCE_TABLE.lock().get(arg0 as u64);
+            match res {
+                Some(res) => { res.wait(); 0 }
+                None => EBADF,
+            }
+        }
+        SYS_CONDVAR_SIGNAL => {
+            let res = RESOURCE_TABLE.lock().get(arg0 as u64);
+            match res {
+                Some(res) => { res.signal(); 0 }
+                None => EBADF,
+            }
+        }
+        SYS_CONDVAR_BROADCAST => {
+            let res = RESOURCE_TABLE.lock().get(arg0 as u64);
+            match res {
+                Some(res) => { res.broadcast(); 0 }
+                None => EBADF,
+            }
+        }
         SYS_PIPE_CREATE => {
             let pipe = Arc::new(crate::ipc::pipe::Pipe::new());
             let handle = IPC_TABLE.lock().insert(pipe);

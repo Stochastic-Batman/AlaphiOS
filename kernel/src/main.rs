@@ -103,6 +103,18 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     scheduler::init();
 
+    {
+        use crate::syscall::dispatch::syscall_handler;
+        use crate::syscall::numbers::*;
+
+        let h = syscall_handler(SYS_GETRESOURCE, 0, 0, 0, 0, 0) as usize;
+        assert_eq!(syscall_handler(SYS_MUTEX_LOCK, h, 0, 0, 0, 0), 0);
+        assert_eq!(syscall_handler(SYS_MUTEX_TRYLOCK, h, 0, 0, 0, 0), -11); // EAGAIN: already held
+        assert_eq!(syscall_handler(SYS_MUTEX_UNLOCK, h, 0, 0, 0, 0), 0);
+        assert_eq!(syscall_handler(SYS_MUTEX_TRYLOCK, h, 0, 0, 0, 0), 0);   // now free
+        serial_println!("sync syscall smoke test passed");
+    }
+
     fs_smoke_test();
     serial_println!("fs smoke test done");
     
