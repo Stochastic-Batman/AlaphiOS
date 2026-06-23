@@ -1,5 +1,7 @@
 // kernel should be loaded via bootloader crate.
 // GDT must be set up before any interrupt can be handled. 
+use crate::arch::syscall::PerCpuScratch;
+use x86_64::registers::model_specific::KernelGsBase;
 use x86_64::structures::gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector};
 use x86_64::structures::tss::TaskStateSegment;
 use x86_64::VirtAddr;
@@ -7,6 +9,8 @@ use spin::Lazy;
 
 
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;  // Index into the IST for the double-fault handler stack (0-based).
+static BOOT_SCRATCH: PerCpuScratch = PerCpuScratch::new(0);  // kernel_rsp=0 is safe at boot: no user task exists yet so syscall_entry won't fire
+
 
 pub struct Selectors {
     pub kernel_code: SegmentSelector,
@@ -49,6 +53,10 @@ pub fn init() {
         CS::set_reg(GDT.1.kernel_code);
         SS::set_reg(GDT.1.kernel_data);
         load_tss(GDT.1.tss);
+    }
+
+    unsafe {
+        KernelGsBase::write(VirtAddr::new(&BOOT_SCRATCH as *const PerCpuScratch as u64));
     }
 }
 

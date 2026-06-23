@@ -1,6 +1,7 @@
 use alloc::sync::Arc;
 use alloc::collections::BTreeMap;
 use spin::Lazy;
+use crate::arch::syscall::{TrapFrame};
 use crate::process::lifecycle;
 use crate::process::pid::Pid;
 use crate::scheduler;
@@ -62,7 +63,13 @@ unsafe fn str_from_user(ptr: usize, len: usize) -> Option<&'static str> {
 // Only mismatch is arg3: move R10 -> RCX before the call.
 // Most of the stuff below is written by with the help of Claude Sonnet 4.6
 #[unsafe(no_mangle)]
-pub extern "C" fn syscall_handler(nr: usize, arg0: usize, arg1: usize, arg2: usize, _arg3: usize, _arg4: usize) -> isize {
+pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
+    let arg0 = frame.rdi as usize;
+    let arg1 = frame.rsi as usize;
+    let arg2 = frame.rdx as usize;
+    let arg3 = frame.r10 as usize;
+    let arg4 = frame.r8  as usize;
+
     match nr {
         SYS_GETPID  => scheduler::current_pid().as_u64() as isize,
         SYS_GETPPID => scheduler::current_ppid().map(|p| p.as_u64() as isize).unwrap_or(-1),
@@ -279,7 +286,7 @@ pub extern "C" fn syscall_handler(nr: usize, arg0: usize, arg1: usize, arg2: usi
         }
         SYS_RENAME => {
             let old = unsafe { str_from_user(arg0, arg1) };
-            let new = unsafe { str_from_user(arg2, _arg3) };
+            let new = unsafe { str_from_user(arg2, arg3) };
             match (old, new) {
                 (Some(o), Some(n)) => match fs::FS.lock().rename(o, n) {
                     Ok(()) => 0,
@@ -337,7 +344,7 @@ pub extern "C" fn syscall_handler(nr: usize, arg0: usize, arg1: usize, arg2: usi
         SYS_GETDENTS => {
             let path = unsafe { str_from_user(arg0, arg1) };
             let buf_ptr = arg2 as *mut u8;
-            let buf_len = _arg3;
+            let buf_len = arg3;
 
             let Some(p) = path else { return EFAULT };
             if buf_len > 0 && buf_ptr.is_null() { return EFAULT; }

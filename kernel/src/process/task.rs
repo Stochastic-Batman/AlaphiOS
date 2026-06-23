@@ -1,6 +1,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU32, Ordering};
+use crate::arch::syscall::PerCpuScratch;
 use crate::memory::vmm::Vmm;
 use crate::process::pid::{Pid, Tid};
 use x86_64::registers::control::Cr3;
@@ -41,6 +42,8 @@ pub struct Task {
     pub children: Vec<Pid>,
     pub exit_code: Option<i32>,
     pub vmm: Vmm,
+    pub kernel_stack_top: u64,
+    pub scratch: PerCpuScratch,
     kernel_stack: Vec<u8>,
 }
 
@@ -48,7 +51,8 @@ pub struct Task {
 impl Task {
     pub fn new(entry: fn() -> !, priority: u8, parent: Option<Pid>) -> Self {
         let mut kernel_stack = vec![0u8; KERNEL_STACK_SIZE];
-        let rsp = Self::setup_stack(&mut kernel_stack, entry);
+        let kernel_stack_top = (kernel_stack.as_mut_ptr() as usize + kernel_stack.len()) as u64 & !15;
+        let rsp = Self::setup_stack(&mut kernel_stack, entry, kernel_stack_top);
         let pid = Pid::next();
 
         Task {
@@ -64,12 +68,14 @@ impl Task {
             children: Vec::new(),
             exit_code: None,
             vmm: Vmm::new(),
+            kernel_stack_top,
+            scratch: PerCpuScratch::new(kernel_stack_top),
             kernel_stack,
         }
     }
 
-    fn setup_stack(stack: &mut Vec<u8>, entry: fn() -> !) -> u64 {
-        let top = (stack.as_mut_ptr() as usize + stack.len()) & !15;  // left_op & 11110000 clears the lower 4 bits, aligning it as x86_64 demands.
+    fn setup_stack(stack: &mut Vec<u8>, entry: fn() -> !, top: u64) -> u64 {
+        let _ = stack;  // retained as a parameter for the unsafe write below
         unsafe {  // these callee-saved registers must not change (or change, but must be restored before the function exits)
             let ptr = top as *mut u64;
             ptr.sub(1).write(entry as u64); // consumed by trampoline's ret

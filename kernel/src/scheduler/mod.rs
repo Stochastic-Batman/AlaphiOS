@@ -15,6 +15,13 @@ static SCHEDULER: Lazy<Spinlock<MlfqScheduler>> = Lazy::new(|| Spinlock::new(Mlf
 
 pub fn init() {
     let idle = Arc::new(Spinlock::new(Task::new(idle_task, (mlfq::NUM_QUEUES - 1) as u8, None)));
+
+    {  // Point KERNEL_GS_BASE at the idle task's scratch before any syscall can fire.
+        let guard = idle.lock();
+        let addr = &guard.scratch as *const crate::arch::syscall::PerCpuScratch as u64;
+        unsafe { x86_64::registers::model_specific::KernelGsBase::write(x86_64::VirtAddr::new(addr)); }
+    }
+
     SCHEDULER.lock().set_current(idle);
 }
 

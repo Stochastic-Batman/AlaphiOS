@@ -1,3 +1,4 @@
+use crate::arch::syscall::PerCpuScratch;
 use crate::process::task::Task;
 
 
@@ -11,8 +12,13 @@ pub unsafe extern "C" fn switch_to(outgoing: *mut Task, incoming: *const Task) {
         "push r13",
         "push r14",
         "push r15",
-        "mov [rdi + {rsp_off}], rsp",
-        "mov rsp, [rsi + {rsp_off}]",
+        "mov [{rsp_off} + rdi], rsp",
+        "mov rsp, [{rsp_off} + rsi]",
+        "lea rax, [rsi + {scratch_off}]",
+        "mov rdx, rax",
+        "shr rdx, 32",
+        "mov ecx, 0xC0000102",
+        "wrmsr",
         "pop r15",
         "pop r14",
         "pop r13",
@@ -21,5 +27,6 @@ pub unsafe extern "C" fn switch_to(outgoing: *mut Task, incoming: *const Task) {
         "pop rbx",
         "ret",
         rsp_off = const core::mem::offset_of!(Task, rsp),
+        scratch_off = const core::mem::offset_of!(Task, scratch),
     )
 }

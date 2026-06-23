@@ -110,14 +110,43 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     scheduler::init();
 
     {
+        use crate::arch::syscall::TrapFrame;
         use crate::syscall::dispatch::syscall_handler;
         use crate::syscall::numbers::*;
 
-        let h = syscall_handler(SYS_GETRESOURCE, 0, 0, 0, 0, 0) as usize;
-        assert_eq!(syscall_handler(SYS_MUTEX_LOCK, h, 0, 0, 0, 0), 0);
-        assert_eq!(syscall_handler(SYS_MUTEX_TRYLOCK, h, 0, 0, 0, 0), -11); // EAGAIN: already held
-        assert_eq!(syscall_handler(SYS_MUTEX_UNLOCK, h, 0, 0, 0, 0), 0);
-        assert_eq!(syscall_handler(SYS_MUTEX_TRYLOCK, h, 0, 0, 0, 0), 0);   // now free
+        let mut tf = TrapFrame {
+            r15: 0,
+            r14: 0,
+            r13: 0,
+            r12: 0,
+            rbp: 0,
+            rbx: 0,
+            r11: 0,
+            r10: 0,
+            r9: 0,
+            r8: 0,
+            rdi: 0,
+            rsi: 0,
+            rdx: 0,
+            rcx: 0,
+            rax: 0,
+            user_rsp: 0,
+        };
+
+        let h = syscall_handler(SYS_GETRESOURCE, &mut tf) as usize;
+
+        tf.rdi = h as u64;
+        assert_eq!(syscall_handler(SYS_MUTEX_LOCK, &mut tf), 0);
+
+        tf.rdi = h as u64;
+        assert_eq!(syscall_handler(SYS_MUTEX_TRYLOCK, &mut tf), -11);
+
+        tf.rdi = h as u64;
+        assert_eq!(syscall_handler(SYS_MUTEX_UNLOCK, &mut tf), 0);
+
+        tf.rdi = h as u64;
+        assert_eq!(syscall_handler(SYS_MUTEX_TRYLOCK, &mut tf), 0);
+
         serial_println!("sync syscall smoke test passed");
     }
 
