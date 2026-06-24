@@ -47,6 +47,8 @@ pub struct Task {
     pub scratch: PerCpuScratch,
     pub user_entry: u64,  // ring-3 RIP; 0 for pure kernel tasks
     pub user_stack: u64,  // ring-3 RSP; 0 for pure kernel tasks
+    pub heap_start: u64,  // first page after code; 0 for kernel tasks
+    pub brk: u64,         // current program break (grows from heap_start)
     kernel_stack: Vec<u8>,
 }
 
@@ -75,6 +77,8 @@ impl Task {
             scratch: PerCpuScratch::new(kernel_stack_top),
             user_entry: 0,
             user_stack: 0,
+            heap_start: 0,
+            brk: 0,
             kernel_stack,
         }
     }
@@ -117,6 +121,8 @@ impl Task {
             scratch: PerCpuScratch::new(top),
             user_entry: 0,
             user_stack: 0,
+            heap_start: 0,
+            brk: 0,
             kernel_stack,
         }
     }
@@ -144,6 +150,8 @@ impl Task {
             scratch: PerCpuScratch::new(top),
             user_entry: 0,
             user_stack: 0,
+            heap_start: self.heap_start,
+            brk: self.brk,
             kernel_stack,
         }
     }
@@ -171,6 +179,8 @@ impl Task {
             scratch: PerCpuScratch::new(top),
             user_entry: entry,
             user_stack,
+            heap_start: 0,
+            brk: 0,
             kernel_stack,
         }
     }

@@ -48,7 +48,8 @@ pub fn load_flat(bytes: &[u8], priority: u8) -> Task {
         }
     }
 
-    // Stack: one anonymous area, zero-filled on demand by the page-fault handler.
+    let heap_start = (USER_CODE_BASE + bytes.len() as u64 + PAGE_SIZE as u64 - 1) & !(PAGE_SIZE as u64 - 1);
+
     let mut vmm = Vmm::new();
     vmm.add_area(VmArea {
         start: VirtAddr::new(USER_STACK_TOP - USER_STACK_SIZE),
@@ -57,7 +58,10 @@ pub fn load_flat(bytes: &[u8], priority: u8) -> Task {
         kind:  VmAreaKind::Anonymous,
     });
 
-    Task::new_user(USER_CODE_BASE, USER_STACK_TOP, l4_frame.start_address().as_u64(), vmm, priority)
+    let mut task = Task::new_user(USER_CODE_BASE, USER_STACK_TOP, l4_frame.start_address().as_u64(), vmm, priority);
+    task.heap_start = heap_start;
+    task.brk = heap_start;
+    task
 }
 
 

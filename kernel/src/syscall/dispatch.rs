@@ -1,8 +1,13 @@
 use alloc::sync::Arc;
 use alloc::collections::BTreeMap;
 use spin::Lazy;
+use x86_64::VirtAddr;
+use x86_64::structures::paging::PageTableFlags;
+use crate::arch::paging::{PageMapper, PHYS_MEM_OFFSET};
 use crate::arch::syscall::{TrapFrame};
+use crate::memory::FRAME_ALLOCATOR;
 use crate::process::lifecycle;
+use crate::process::loader::{USER_STACK_TOP, USER_STACK_SIZE};
 use crate::process::pid::{Pid, Tid};
 use crate::process::table::TaskRegistry;
 use crate::scheduler;
@@ -459,6 +464,76 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
             };
 
             child_pid.as_u64() as isize
+        }
+        SYS_BRK => {
+            let new_brk = arg0 as u64;
+            let tid = scheduler::current_tid();
+
+            let mut fa = FRAME_ALLOCATOR.lock();
+            let table = crate::process::table::TASK_TABLE.lock();
+            let task_arc = match table.get(tid) {
+                Some(a) => a,
+                None => return EBADF,
+            };
+            let mut task = task_arc.lock();
+
+            if new_brk == 0 {
+                return task.brk as isize;
+            }
+
+            let aligned = (new_brk + 0xFFF) & !0xFFF;
+            let stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
+            if aligned < task.heap_start || aligned >= stack_bottom {
+                return task.brk as isize;
+            }
+
+            let heap_flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE;
+            let heap_start = task.heap_start;
+            let old_brk = task.brk;
+
+            if aligned > old_brk {
+                task.vmm.set_heap_end(VirtAddr::new(heap_start), VirtAddr::new(aligned), heap_flags);
+            } else if aligned < old_brk {
+                let phys_offset = VirtAddr::new(PHYS_MEM_OFFSET);
+                let mut mapper = unsafe { PageMapper::new(phys_offset) };
+                task.vmm.shrink_heap(VirtAddr::new(heap_start), VirtAddr::new(aligned), VirtAddr::new(old_brk), heap_flags, &mut mapper, &mut *fa);
+            }
+
+            task.brk = aligned;
+            aligned as isize
+        }
+        SYS_MPROTECT => {
+            let addr = arg0 as u64;
+            let len = arg1 as u64;
+            let prot = arg2;
+
+            if addr & 0xFFF != 0 || len == 0 {
+                return EFAULT;
+            }
+
+            let aligned_len = (len + 0xFFF) & !0xFFF;
+
+            const PROT_WRITE: usize = 2;
+            let mut flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE;
+            if prot & PROT_WRITE != 0 {
+                flags |= PageTableFlags::WRITABLE;
+            }
+
+            let tid = scheduler::current_tid();
+            let table = crate::process::table::TASK_TABLE.lock();
+            let task_arc = match table.get(tid) {
+                Some(a) => a,
+                None => return EBADF,
+            };
+            let mut task = task_arc.lock();
+
+            let phys_offset = VirtAddr::new(PHYS_MEM_OFFSET);
+            let mut mapper = unsafe { PageMapper::new(phys_offset) };
+
+            match task.vmm.mprotect(VirtAddr::new(addr), aligned_len, flags, &mut mapper) {
+                Ok(()) => 0,
+                Err(()) => EFAULT,
+            }
         }
         _ => ENOSYS,
     }

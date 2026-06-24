@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 use x86_64::VirtAddr;
 use x86_64::structures::paging::{FrameAllocator, PageTableFlags, Size4KiB, Page, PhysFrame};
-use crate::arch::paging::PageMapper;
+use crate::arch::paging::{PageMapper, PHYS_MEM_OFFSET};
 use crate::memory::frame_allocator::FrameAlloc;
 
 
@@ -64,6 +64,68 @@ impl Vmm {
                 core::ptr::write_bytes((offset + new_frame.start_address().as_u64()) as *mut u8, 0, 4096);
             }
             mapper.map_page(page, new_frame, area.flags, frame_alloc);
+        }
+
+        Ok(())
+    }
+
+    pub fn set_heap_end(&mut self, heap_start: VirtAddr, new_end: VirtAddr, flags: PageTableFlags) {
+        if let Some(area) = self.areas.iter_mut().find(|a| a.start == heap_start) {
+            area.end = new_end;
+        } else if new_end > heap_start {
+            self.add_area(VmArea { start: heap_start, end: new_end, flags, kind: VmAreaKind::Anonymous });
+        }
+    }
+
+    pub fn shrink_heap(&mut self, heap_start: VirtAddr, new_end: VirtAddr, old_end: VirtAddr, flags: PageTableFlags, mapper: &mut PageMapper, fa: &mut impl FrameAlloc) {
+        let mut addr = new_end;
+        
+        while addr < old_end {
+            if mapper.translate_addr(addr).is_some() {
+                let page = Page::containing_address(addr);
+                let frame = mapper.unmap_page(page);
+                fa.deallocate(frame);
+            }
+            
+            addr += 4096u64;
+        }
+
+        self.set_heap_end(heap_start, new_end, flags);
+    }
+
+    pub fn mprotect(&mut self, addr: VirtAddr, len: u64, new_flags: PageTableFlags, mapper: &mut PageMapper) -> Result<(), ()> {
+        let end = addr + len;
+        let idx = self.areas.iter().position(|a| a.start <= addr && addr < a.end).ok_or(())?;
+        let area = self.areas[idx];
+
+        if end > area.end {
+            return Err(());
+        }
+
+        let mut replacements = Vec::new();
+        if addr > area.start {
+            replacements.push(VmArea { start: area.start, end: addr, flags: area.flags, kind: area.kind });
+        }
+
+        replacements.push(VmArea { start: addr, end, flags: new_flags, kind: area.kind });
+        if end < area.end {
+            replacements.push(VmArea { start: end, end: area.end, flags: area.flags, kind: area.kind });
+        }
+
+        self.areas.remove(idx);
+        for (i, a) in replacements.into_iter().enumerate() {
+            self.areas.insert(idx + i, a);
+        }
+
+        let mut page_addr = addr;
+        
+        while page_addr < end {
+            if mapper.translate_addr(page_addr).is_some() {
+                let page = Page::containing_address(page_addr);
+                mapper.remap_flags(page, new_flags);
+            }
+        
+            page_addr += 4096u64;
         }
 
         Ok(())
