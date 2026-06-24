@@ -2,16 +2,28 @@
 #![no_main]
 #![feature(abi_x86_interrupt)]
 extern crate alloc;
+ 
 
+use alloc::boxed::Box;
 use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
 use bootloader_api::config::Mapping;
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use spin::Mutex;
 use uart_16550::SerialPort;
+use crate::arch::paging::{PageMapper, PHYS_MEM_OFFSET};
+use crate::arch::syscall::TrapFrame;
+use crate::fs::fat::FatFs;
+use crate::io::disk::{DiskDevice, RamDisk};
+use crate::memory::FRAME_ALLOCATOR;
+use crate::process::lifecycle;
+use crate::process::table::{TASK_TABLE, TaskRegistry};
+use crate::process::task::Task;
 use crate::sync::atomic::KernelAtomicUsize;
-use crate::process::table::TaskRegistry;
-
+use crate::sync::monitor::Monitor;
+use crate::syscall::dispatch::syscall_handler;
+use crate::syscall::numbers::*;
+ 
 
 mod arch;
 mod fs;
@@ -24,6 +36,17 @@ mod security;
 mod sync;
 mod syscall;
 
+
+const BOOTLOADER_CONFIG: BootloaderConfig = {
+    let mut cfg = BootloaderConfig::new_default();
+    cfg.mappings.physical_memory = Some(Mapping::FixedAddress(0xFFFF_8000_0000_0000));
+    cfg.kernel_stack_size = 64 * 4096;
+    cfg
+};
+
+const BOOT_DISK_SECTOR_SIZE: usize = 512;
+const BOOT_DISK_SECTOR_COUNT: usize = (64 * 1024 * 1024) / BOOT_DISK_SECTOR_SIZE;
+const PING_PONG_HANDOFFS: u32 = 20;
 
 // Problem: Kernel has no screen driver yet. The VGA framebuffer exists but I haven't written code to talk to it. I need some way to print debug output while building everything else. Serial is the answer because it requires almost no setup.
 // UART (Universal Asynchronous Receiver-Transmitter) is a hardware protocol for sending bytes one bit at a time over a wire. The 16550 is a specific chip implementing it - it's been in PCs since the 1980s and every PC-compatible machine (including QEMU's emulated one) has it. "Serial port" and "COM port" are the same thing from the software side.
@@ -43,6 +66,9 @@ static SERIAL: Mutex<SerialPort> = unsafe {
 
 static CLONE_FLAG: KernelAtomicUsize = KernelAtomicUsize::new(0);
 static FORK_FLAG: KernelAtomicUsize = KernelAtomicUsize::new(0);
+
+struct PingPongState { turn: u8, count: u32 }
+static PING_PONG: Monitor<PingPongState> = Monitor::new(PingPongState { turn: 0, count: 0 });
 
 
 pub fn serial_init() {
@@ -79,258 +105,102 @@ macro_rules! serial_println {
 }
 
 
-const BOOTLOADER_CONFIG: BootloaderConfig = {
-    let mut cfg = BootloaderConfig::new_default();
-    cfg.mappings.physical_memory = Some(Mapping::FixedAddress(0xFFFF_8000_0000_0000));
-    cfg.kernel_stack_size = 64 * 4096;
-    cfg
-};
-
-
 entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
-
+ 
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     serial_init();
     serial_println!("AlaphiOS booting...");
-
+ 
     arch::init();
-    serial_println!("arch init done");
-
     memory::init(boot_info);
-    serial_println!("memory init done");
-    {
-        use alloc::boxed::Box;
-        let probe = Box::new(0xDEAD_BEEFu64);
-        serial_println!("heap: {:x} @ {:p}", *probe, probe);
-    }
-
-    io_smoke_test();
-    serial_println!("io smoke test done");
-
+    { let probe = Box::new(0xDEAD_BEEFu64); serial_println!("heap: {:x} @ {:p}", *probe, probe); }
     mount_boot_disk();
-    serial_println!("fat32 mount done");
-
     load_system_domain();
-    serial_println!("/.system/ load done");
-
     scheduler::init();
-
-    {
-        use crate::arch::syscall::TrapFrame;
-        use crate::syscall::dispatch::syscall_handler;
-        use crate::syscall::numbers::*;
-
-        let mut tf = TrapFrame {
-            r15: 0,
-            r14: 0,
-            r13: 0,
-            r12: 0,
-            rbp: 0,
-            rbx: 0,
-            r11: 0,
-            r10: 0,
-            r9: 0,
-            r8: 0,
-            rdi: 0,
-            rsi: 0,
-            rdx: 0,
-               rcx: 0,
-            rax: 0,
-            user_rsp: 0,
-        };
-
-        let h = syscall_handler(SYS_GETRESOURCE, &mut tf) as usize;
-
-        tf.rdi = h as u64;
-        assert_eq!(syscall_handler(SYS_MUTEX_LOCK, &mut tf), 0);
-
-        tf.rdi = h as u64;
-        assert_eq!(syscall_handler(SYS_MUTEX_TRYLOCK, &mut tf), -11);
-
-        tf.rdi = h as u64;
-        assert_eq!(syscall_handler(SYS_MUTEX_UNLOCK, &mut tf), 0);
-
-        tf.rdi = h as u64;
-        assert_eq!(syscall_handler(SYS_MUTEX_TRYLOCK, &mut tf), 0);
-
-        serial_println!("sync syscall smoke test passed");
-    }
-
+ 
+    io_smoke_test();
+    sync_syscall_smoke_test();
     fs_smoke_test();
-    serial_println!("fs smoke test done");
-    
     clone_smoke_test();
-    serial_println!("clone smoke test done");
-    
     fork_smoke_test();
-    serial_println!("fork smoke test done");
-
-    use crate::process::task::Task;
-   // scheduler::spawn(Task::new(scheduler_smoke_a, 0, None));
-   // scheduler::spawn(Task::new(scheduler_smoke_b, 0, None));
+ 
     scheduler::spawn(Task::new(ping_pong_a, 0, None));
     scheduler::spawn(Task::new(ping_pong_b, 0, None));
-    serial_println!("scheduler smote tests passed");
-
-    serial_println!("boot complete, entering idle loop");
-    loop {
-        x86_64::instructions::hlt();
-    }
+ 
+    serial_println!("boot complete");
+    loop { x86_64::instructions::hlt(); }
 }
 
-
-fn scheduler_smoke_a() -> ! {
-    loop {
-        serial_println!("[A]");
-        let end = crate::arch::interrupts::TICKS.load() + 20;
-        while crate::arch::interrupts::TICKS.load() < end {
-            x86_64::instructions::hlt();
-        }
-    }
-}
-
-fn scheduler_smoke_b() -> ! {
-    loop {
-        serial_println!("[B]");
-        let end = crate::arch::interrupts::TICKS.load() + 20;
-        while crate::arch::interrupts::TICKS.load() < end {
-            x86_64::instructions::hlt();
-        }
-    }
-}
-
-fn io_smoke_test() {
-    use crate::io::disk::DiskDevice;
-
-    let mut disk = crate::io::disk::RamDisk::new(16, 512);
-    let mut write_buf = [0u8; 512];
-    for (i, b) in write_buf.iter_mut().enumerate() {
-        *b = (i % 256) as u8;
-    }
-
-    disk.write_sector(3, &write_buf).expect("ramdisk write failed");
-    let mut read_buf = [0u8; 512];
-    disk.read_sector(3, &mut read_buf).expect("ramdisk read failed");
-
-    assert_eq!(write_buf, read_buf, "ramdisk roundtrip mismatch");
-    serial_println!("io smoke test passed: sector roundtrip ok");
-}
-
-// the kernel-resident FAT32 system partition. 
-// A real disk image isn't available under QEMU in this project, so the "system partition" is a RamDisk formatted fresh on every boot.
-// 64 MiB clears FAT32's minimum cluster-count requirement with room to spare.
-const BOOT_DISK_SECTOR_SIZE: usize = 512;
-const BOOT_DISK_SECTOR_COUNT: usize = (64 * 1024 * 1024) / BOOT_DISK_SECTOR_SIZE;
 
 fn mount_boot_disk() {
-    use crate::io::disk::RamDisk;
-    use crate::fs::fat::FatFs;
-
     let disk = RamDisk::new(BOOT_DISK_SECTOR_COUNT, BOOT_DISK_SECTOR_SIZE);
     let fatfs = FatFs::format_and_mount(disk).expect("failed to format/mount boot FAT32 volume");
-
     fs::FS.lock().mount_disk(fatfs);
 }
-
-// load auth.db / perms.db from /.system/ into kernel memory at boot. checker runs as part of this load
+ 
 fn load_system_domain() {
     let mut guard = fs::FS.lock();
-    let (disk, auth, perms) = guard.disk_and_overlays_mut().expect("disk must be mounted before loading /.system/");
+    let (disk, auth, perms) = guard.disk_and_overlays_mut().expect("disk not mounted");
     fs::system_domain::load_at_boot(disk, auth, perms);
 }
-
+ 
+fn io_smoke_test() {
+    let mut disk = RamDisk::new(16, 512);
+    let mut buf = [0u8; 512];
+    for (i, b) in buf.iter_mut().enumerate() { *b = (i % 256) as u8; }
+    disk.write_sector(3, &buf).expect("write failed");
+    let mut rbuf = [0u8; 512];
+    disk.read_sector(3, &mut rbuf).expect("read failed");
+    assert_eq!(buf, rbuf);
+    serial_println!("io smoke test passed");
+}
+ 
+fn sync_syscall_smoke_test() {
+    let mut tf = TrapFrame { r15:0, r14:0, r13:0, r12:0, rbp:0, rbx:0,
+                              r11:0, r10:0, r9:0,  r8:0,  rdi:0, rsi:0,
+                              rdx:0, rcx:0, rax:0, user_rsp:0 };
+    let h = syscall_handler(SYS_GETRESOURCE, &mut tf) as usize;
+    tf.rdi = h as u64; assert_eq!(syscall_handler(SYS_MUTEX_LOCK,    &mut tf),   0);
+    tf.rdi = h as u64; assert_eq!(syscall_handler(SYS_MUTEX_TRYLOCK, &mut tf), -11);
+    tf.rdi = h as u64; assert_eq!(syscall_handler(SYS_MUTEX_UNLOCK,  &mut tf),   0);
+    tf.rdi = h as u64; assert_eq!(syscall_handler(SYS_MUTEX_TRYLOCK, &mut tf),   0);
+    serial_println!("sync syscall smoke test passed");
+}
+ 
 fn fs_smoke_test() {
     let pid = scheduler::current_pid();
-    let mut fs = crate::fs::FS.lock();
-
+    let mut fs = fs::FS.lock();
     let fd = fs.create("/hello.txt", pid).expect("create failed");
     fs.write(fd, pid, b"hi").expect("write failed");
     fs.close(fd, pid).expect("close failed");
-
     let fd = fs.open("/hello.txt", pid).expect("reopen failed");
     let mut buf = [0u8; 2];
     fs.read(fd, pid, &mut buf).expect("read failed");
-    assert_eq!(&buf, b"hi", "fs roundtrip mismatch");
+    assert_eq!(&buf, b"hi");
     fs.close(fd, pid).expect("close failed");
-
-    serial_println!("fs smoke test passed: fatfs roundtrip ok");
+    serial_println!("fs smoke test passed");
 }
-
-
-struct PingPongState { turn: u8, count: u32 }
-
-static PING_PONG: crate::sync::monitor::Monitor<PingPongState> = crate::sync::monitor::Monitor::new(PingPongState { turn: 0, count: 0 });
-
-const PING_PONG_HANDOFFS: u32 = 20;
-
-fn ping_pong_task(my_turn: u8) -> ! {
-    loop {
-        let mut guard = PING_PONG.lock();
-        while guard.turn != my_turn {
-            guard = PING_PONG.wait(guard);
-        }
-
-        guard.count += 1;
-        let done = guard.count >= PING_PONG_HANDOFFS;
-        guard.turn = 1 - my_turn;
-
-        if done {
-            serial_println!("scheduler/monitor smoke test passed: {} handoffs", guard.count);
-        }
-
-        PING_PONG.broadcast();
-        core::mem::drop(guard);
-
-        if done {
-            crate::process::lifecycle::exit(0);
-        }
-    }
-}
-
-fn ping_pong_a() -> ! { ping_pong_task(0) }
-fn ping_pong_b() -> ! { ping_pong_task(1) }
-
-fn clone_child_task() -> ! {
-    CLONE_FLAG.store(1);
-    crate::process::lifecycle::exit(0);
-}
-
+ 
 fn clone_smoke_test() {
     CLONE_FLAG.store(0);
-    let curr = scheduler::current_pid();
-    let thread = {
-        let table = crate::process::table::TASK_TABLE.lock();
-        table.get(curr).unwrap().lock().clone_thread(clone_child_task, 0)
-    };
+    let curr = scheduler::current_tid();
+    let thread = TASK_TABLE.lock().get(curr).unwrap().lock().clone_thread(clone_child_task, 0);
     let tid = thread.tid;
     scheduler::spawn(thread);
-    crate::process::lifecycle::wait_tid(tid);
+    lifecycle::wait_tid(tid);
     assert_eq!(CLONE_FLAG.load(), 1, "clone child did not run");
     serial_println!("clone/join smoke test passed");
 }
-
-fn fork_child_task() -> ! {
-    FORK_FLAG.store(42);
-    crate::process::lifecycle::exit(0);
-}
-
+ 
 fn fork_smoke_test() {
-    use crate::arch::paging::{PageMapper, PHYS_MEM_OFFSET};
-    use crate::memory::FRAME_ALLOCATOR;
-
     FORK_FLAG.store(0);
-    let curr = scheduler::current_pid();
+    let curr = scheduler::current_tid();
     let phys_offset = x86_64::VirtAddr::new(PHYS_MEM_OFFSET);
     let mut parent_mapper = unsafe { PageMapper::new(phys_offset) };
-
-    let (child_l4, _child_mapper) = {
-        let mut fa = FRAME_ALLOCATOR.lock();
-        parent_mapper.clone_kernel_half(&mut *fa)
-    };
-
+    let (child_l4, _) = { let mut fa = FRAME_ALLOCATOR.lock(); parent_mapper.clone_kernel_half(&mut *fa) };
     let child_pid = {
-        let table = crate::process::table::TASK_TABLE.lock();
+        let table = TASK_TABLE.lock();
         let mut child = table.get(curr).unwrap().lock().fork_kernel(fork_child_task, 0);
         child.cr3 = child_l4.start_address().as_u64();
         let pid = child.pid;
@@ -338,20 +208,42 @@ fn fork_smoke_test() {
         scheduler::spawn(child);
         pid
     };
-
-    let code = crate::process::lifecycle::wait(child_pid);
-    assert_eq!(code, 0, "fork child exited with wrong code");
+    let code = lifecycle::wait(child_pid);
+    assert_eq!(code, 0);
     assert_eq!(FORK_FLAG.load(), 42, "fork child did not run");
     serial_println!("fork smoke test passed");
 }
+ 
+fn clone_child_task() -> ! {
+    CLONE_FLAG.store(1);
+    lifecycle::exit(0);
+}
+ 
+fn fork_child_task() -> ! {
+    FORK_FLAG.store(42);
+    lifecycle::exit(0);
+}
+ 
+fn ping_pong_task(my_turn: u8) -> ! {
+    loop {
+        let mut guard = PING_PONG.lock();
+        while guard.turn != my_turn { guard = PING_PONG.wait(guard); }
+        guard.count += 1;
+        let done = guard.count >= PING_PONG_HANDOFFS;
+        guard.turn = 1 - my_turn;
+        if done { serial_println!("scheduler/monitor smoke test passed: {} handoffs", guard.count); }
+        PING_PONG.broadcast();
+        core::mem::drop(guard);
+        if done { lifecycle::exit(0); }
+    }
+}
+ 
+fn ping_pong_a() -> ! { ping_pong_task(0) }
+fn ping_pong_b() -> ! { ping_pong_task(1) }
+ 
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    // Do not call any allocator or scheduler code here - the system may be
-    // in an inconsistent state. Serial I/O is safe because _print only takes
-    // a spinlock and writes to a hardware register.
     serial_println!("KERNEL PANIC: {}", info);
-    loop {
-        x86_64::instructions::hlt();
-    }
+    loop { x86_64::instructions::hlt(); }
 }

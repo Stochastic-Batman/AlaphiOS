@@ -407,11 +407,11 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
             const CLONE_VM: usize = 0x100;
             if arg0 & CLONE_VM == 0 { return ENOSYS; }
             let entry: fn() -> ! = unsafe { core::mem::transmute(arg1) };
-            let curr_pid = scheduler::current_pid();
+            let curr_tid = scheduler::current_tid();
 
             let thread = {
                 let table = crate::process::table::TASK_TABLE.lock();
-                match table.get(curr_pid) {
+                match table.get(curr_tid) {
                     None => return EBADF,
                     Some(arc) => arc.lock().clone_thread(entry, arg2 as u8),
                 }
@@ -427,7 +427,7 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
         }
         SYS_FORK => {
             let entry: fn() -> ! = unsafe { core::mem::transmute(arg0) };
-            let curr_pid = scheduler::current_pid();
+            let curr_tid = scheduler::current_tid();
             let phys_offset = x86_64::VirtAddr::new(crate::arch::paging::PHYS_MEM_OFFSET);
             let mut parent_mapper = unsafe { crate::arch::paging::PageMapper::new(phys_offset) };
 
@@ -440,7 +440,7 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
                 let mut fa = crate::memory::FRAME_ALLOCATOR.lock();
                 let table = crate::process::table::TASK_TABLE.lock();
                 
-                let parent_arc = match table.get(curr_pid) {
+                let parent_arc = match table.get(curr_tid) {
                     Some(a) => a,
                     None => return EBADF,
                 };

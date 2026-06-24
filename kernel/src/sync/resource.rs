@@ -2,7 +2,7 @@
 // unlike Spinlock/Monitor, holding the lock does not disable preemption and can span multiple syscalls:
 // SYS_MUTEX_LOCK returns to user space still "held", released later by an unrelated SYS_MUTEX_UNLOCK call.
 use alloc::collections::VecDeque;
-use crate::process::pid::Pid;
+use crate::process::pid::{Pid, Tid};
 use crate::process::table::{TaskRegistry, TASK_TABLE};
 use crate::process::task::TaskState;
 use crate::scheduler;
@@ -23,12 +23,12 @@ pub trait LockHandle: Send + Sync {
 // two separate locks here would let unlock() run in between and drop a wakeup.
 struct MutexState {
     locked: bool,
-    waiters: VecDeque<Pid>,
+    waiters: VecDeque<Tid>,
 }
 
 pub struct QueuedResource {
     state: Spinlock<MutexState>,
-    cond_waiters: Spinlock<VecDeque<Pid>>,
+    cond_waiters: Spinlock<VecDeque<Tid>>,
 }
 
 impl QueuedResource {
@@ -43,12 +43,12 @@ impl QueuedResource {
 impl LockHandle for QueuedResource {
     fn lock(&self) {
         loop {
-            let curr_pid = scheduler::current_pid();
+            let curr_tid = scheduler::current_tid();
             let acquired = {
                 let mut s = self.state.lock();
                 if s.locked {
-                    s.waiters.push_back(curr_pid);
-                    mark_blocked(curr_pid);  // still under s: preemption disabled, no lost wakeup
+                    s.waiters.push_back(curr_tid);
+                    mark_blocked(curr_tid);  // still under s: preemption disabled, no lost wakeup
                     false
                 } else {
                     s.locked = true;
@@ -73,7 +73,7 @@ impl LockHandle for QueuedResource {
             true
         }
     }
-
+    
     fn unlock(&self) {
         let waiter = {
             let mut s = self.state.lock();
@@ -81,18 +81,17 @@ impl LockHandle for QueuedResource {
             s.waiters.pop_front()
         };
 
-        if let Some(pid) = waiter {
-            scheduler::unblock(pid);
+        if let Some(tid) = waiter {
+            scheduler::unblock_tid(tid);
         }
     }
 
     fn wait(&self) {
-        let curr_pid = scheduler::current_pid();
+        let curr_tid = scheduler::current_tid();
 
         {
-            let mut cw = self.cond_waiters.lock();
-            cw.push_back(curr_pid);
-            mark_blocked(curr_pid);
+            self.cond_waiters.lock().push_back(curr_tid);
+            mark_blocked(curr_tid);
         }
 
         self.unlock();
@@ -101,17 +100,15 @@ impl LockHandle for QueuedResource {
     }
 
     fn signal(&self) {
-        let waiter = self.cond_waiters.lock().pop_front();
-        if let Some(pid) = waiter {
-            scheduler::unblock(pid);
+        if let Some(tid) = self.cond_waiters.lock().pop_front() {
+            scheduler::unblock_tid(tid);
         }
     }
 
     fn broadcast(&self) {
         loop {
-            let waiter = self.cond_waiters.lock().pop_front();
-            match waiter {
-                Some(pid) => scheduler::unblock(pid),
+            match self.cond_waiters.lock().pop_front() {
+                Some(tid) => scheduler::unblock_tid(tid),
                 None => break,
             }
         }
@@ -119,9 +116,9 @@ impl LockHandle for QueuedResource {
 }
 
 
-fn mark_blocked(pid: Pid) {
+fn mark_blocked(tid: Tid) {
     let table = TASK_TABLE.lock();
-    if let Some(task_lock) = table.get(pid) {
+    if let Some(task_lock) = table.get(tid) {
         task_lock.lock().state = TaskState::Blocked;
     }
 }

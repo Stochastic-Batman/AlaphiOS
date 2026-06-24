@@ -51,7 +51,7 @@ extern "x86-interrupt" fn page_fault_handler(frame: InterruptStackFrame, error: 
     let is_write = error.contains(PageFaultErrorCode::CAUSED_BY_WRITE);
 
     let handled = (|| -> Option<bool> {
-        let task_arc = crate::process::table::TASK_TABLE.lock().get(crate::scheduler::current_pid())?;
+        let task_arc = crate::process::table::TASK_TABLE.lock().get(crate::scheduler::current_tid())?;
         let mut task = task_arc.lock();
         let mut frame_alloc = crate::memory::FRAME_ALLOCATOR.lock();
         let phys_offset = x86_64::VirtAddr::new(crate::arch::paging::PHYS_MEM_OFFSET);

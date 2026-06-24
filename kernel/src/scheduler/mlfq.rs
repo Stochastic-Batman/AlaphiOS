@@ -105,6 +105,19 @@ impl MlfqScheduler {
         self.needs_reschedule
     }
 
+    pub fn force_reschedule(&mut self) {
+        self.needs_reschedule = true;
+    }
+
+    pub fn should_reschedule(&mut self) {
+        if let Some(ref current) = self.current {
+            match current.lock().state {
+                TaskState::Blocked | TaskState::Zombie => self.needs_reschedule = true,
+                _ => {}
+            }
+        }
+    }
+
     pub fn prepare_switch(&mut self) -> Option<(*mut Task, *const Task)> {
         if !self.needs_reschedule {
            return None;
