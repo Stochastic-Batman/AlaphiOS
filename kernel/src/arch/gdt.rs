@@ -64,3 +64,14 @@ pub fn init() {
 pub fn syscall_selectors() -> (SegmentSelector, SegmentSelector) {
     (GDT.1.kernel_code, GDT.1.user_code)
 }
+
+
+pub fn user_selectors() -> (u16, u16) {
+    (GDT.1.user_code.0 | 3, GDT.1.user_data.0 | 3)
+}
+
+
+pub fn set_kernel_stack(stack_top: VirtAddr) {
+    let tss = &*TSS as *const TaskStateSegment as *mut TaskStateSegment;
+    unsafe { (*tss).privilege_stack_table[0] = stack_top; }
+}

@@ -117,6 +117,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     { let probe = Box::new(0xDEAD_BEEFu64); serial_println!("heap: {:x} @ {:p}", *probe, probe); }
     mount_boot_disk();
     load_system_domain();
+    arch::paging::record_kernel_l4_entries();
     scheduler::init();
  
     io_smoke_test();
@@ -124,7 +125,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     fs_smoke_test();
     clone_smoke_test();
     fork_smoke_test();
- 
+    user_mode_smoke_test();
+
     scheduler::spawn(Task::new(ping_pong_a, 0, None));
     scheduler::spawn(Task::new(ping_pong_b, 0, None));
  
@@ -214,6 +216,29 @@ fn fork_smoke_test() {
     serial_println!("fork smoke test passed");
 }
  
+fn user_mode_smoke_test() {
+    // A flat ring-3 program: ask the kernel for our pid, then exit with it.
+    //   B8 03 00 00 00   mov eax, 3      ; SYS_GETPID
+    //   0F 05            syscall         ; -> pid in eax
+    //   89 C7            mov edi, eax    ; exit code = pid
+    //   B8 01 00 00 00   mov eax, 1      ; SYS_EXIT
+    //   0F 05            syscall
+    //   EB FE            jmp $           ; never reached
+    static PROG: [u8; 18] = [
+        0xB8, 0x03, 0x00, 0x00, 0x00, 0x0F, 0x05, 0x89, 0xC7,
+        0xB8, 0x01, 0x00, 0x00, 0x00, 0x0F, 0x05, 0xEB, 0xFE,
+    ];
+
+    let mut task = process::loader::load_flat(&PROG, 0);
+    task.parent = Some(scheduler::current_pid());  // so exit() wakes us from wait()
+    let pid = task.pid;
+    scheduler::spawn(task);
+
+    let code = lifecycle::wait(pid);
+    assert_eq!(code as u64, pid.as_u64(), "user task returned wrong exit code");
+    serial_println!("user-mode smoke test passed: ring-3 syscall round trip, pid={}", pid.as_u64());
+}
+
 fn clone_child_task() -> ! {
     CLONE_FLAG.store(1);
     lifecycle::exit(0);

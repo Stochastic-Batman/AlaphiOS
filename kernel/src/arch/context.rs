@@ -1,7 +1,8 @@
 use crate::process::task::Task;
 
 
-// Both pointers must be valid and non-null. Caller owns synchronisation.
+// Both pointers must be valid and non-null, and the caller owns synchronisation.
+// CR3 is loaded only after RSP points at the incoming kernel stack, which is mapped in every address space and so survives the switch.
 #[unsafe(naked)]
 pub unsafe extern "C" fn switch_to(outgoing: *mut Task, incoming: *const Task) {
     core::arch::naked_asm!(
@@ -16,6 +17,14 @@ pub unsafe extern "C" fn switch_to(outgoing: *mut Task, incoming: *const Task) {
         "mov [{rsp_off} + rdi], rsp",
         "1:",
         "mov rsp, [{rsp_off} + rsi]",
+        "mov rax, [{cr3_off} + rsi]",
+        "test rax, rax",
+        "jz 2f",
+        "mov rcx, cr3",
+        "cmp rax, rcx",
+        "je 2f",
+        "mov cr3, rax",
+        "2:",
         "lea rax, [rsi + {scratch_off}]",
         "mov rdx, rax",
         "shr rdx, 32",
@@ -29,6 +38,7 @@ pub unsafe extern "C" fn switch_to(outgoing: *mut Task, incoming: *const Task) {
         "pop rbx",
         "ret",
         rsp_off = const core::mem::offset_of!(Task, rsp),
+        cr3_off = const core::mem::offset_of!(Task, cr3),
         scratch_off = const core::mem::offset_of!(Task, scratch),
     )
 }

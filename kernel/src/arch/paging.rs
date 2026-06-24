@@ -3,9 +3,25 @@ use x86_64::structures::paging::{
     FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame, Size4KiB, Translate,
 };
 use x86_64::registers::control::Cr3;
+use spin::Once;
 
 
 pub const PHYS_MEM_OFFSET: u64 = 0xFFFF_8000_0000_0000;  // Must match bootloader-config/bootloader.toml `physical-memory-offset`.
+
+
+static KERNEL_L4_PRESENT: Once<[bool; 512]> = Once::new();
+
+
+// The bootloader maps the kernel image low (L4 entry 2), so cloning a fixed 256..512 range would drop the kernel's own code.
+// This snapshots every present top-level entry once at boot, before any user address space exists, so clone_kernel_half can reproduce exactly the kernel mappings.
+pub fn record_kernel_l4_entries() {
+    let offset = VirtAddr::new(PHYS_MEM_OFFSET);
+    let (cur_frame, _) = Cr3::read();
+    let l4: &PageTable = unsafe { &*(offset + cur_frame.start_address().as_u64()).as_ptr() };
+    let mut present = [false; 512];
+    for i in 0..512 { present[i] = !l4[i].is_unused(); }
+    KERNEL_L4_PRESENT.call_once(|| present);
+}
 
 
 pub struct PageMapper {
@@ -72,8 +88,9 @@ impl PageMapper {
         let cur_l4: &PageTable = unsafe { &*(offset + cur_frame.start_address().as_u64()).as_ptr() };
         let new_l4: &mut PageTable = unsafe { &mut *(offset + new_frame.start_address().as_u64()).as_mut_ptr() };
 
-        for i in 256..512 {
-            new_l4[i] = cur_l4[i].clone();
+        let kernel = KERNEL_L4_PRESENT.get().expect("kernel L4 entries not recorded");
+        for i in 0..512 {
+            if kernel[i] { new_l4[i] = cur_l4[i].clone(); }
         }
 
         let child_mapper = unsafe { Self::new_from_frame(new_frame, offset) };

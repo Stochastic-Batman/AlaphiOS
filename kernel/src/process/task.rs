@@ -4,6 +4,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::arch::syscall::PerCpuScratch;
 use crate::memory::vmm::Vmm;
 use crate::process::pid::{Pid, Tid};
+use crate::process::table::{TaskRegistry, TASK_TABLE};
 use x86_64::registers::control::Cr3;
 
 
@@ -44,6 +45,8 @@ pub struct Task {
     pub vmm: Vmm,
     pub kernel_stack_top: u64,
     pub scratch: PerCpuScratch,
+    pub user_entry: u64,  // ring-3 RIP; 0 for pure kernel tasks
+    pub user_stack: u64,  // ring-3 RSP; 0 for pure kernel tasks
     kernel_stack: Vec<u8>,
 }
 
@@ -70,6 +73,8 @@ impl Task {
             vmm: Vmm::new(),
             kernel_stack_top,
             scratch: PerCpuScratch::new(kernel_stack_top),
+            user_entry: 0,
+            user_stack: 0,
             kernel_stack,
         }
     }
@@ -110,6 +115,8 @@ impl Task {
             vmm: Vmm::new(),
             kernel_stack_top: top,
             scratch: PerCpuScratch::new(top),
+            user_entry: 0,
+            user_stack: 0,
             kernel_stack,
         }
     }
@@ -135,9 +142,54 @@ impl Task {
             vmm: Vmm::new(),  // set by SYS_FORK after fork_cow
             kernel_stack_top: top,
             scratch: PerCpuScratch::new(top),
+            user_entry: 0,
+            user_stack: 0,
             kernel_stack,
         }
     }
+
+    pub fn new_user(entry: u64, user_stack: u64, cr3: u64, vmm: Vmm, priority: u8) -> Self {
+        let mut kernel_stack = vec![0u8; KERNEL_STACK_SIZE];
+        let top = (kernel_stack.as_mut_ptr() as usize + kernel_stack.len()) as u64 & !15;
+        let rsp = Self::setup_stack(&mut kernel_stack, user_trampoline, top);
+        let pid = Pid::next();
+
+        Task {
+            pid,
+            tid: Tid::next(),
+            thread_group: pid,
+            state: TaskState::Ready,
+            rsp,
+            cr3,
+            preempt_count: 0,
+            priority,
+            parent: None,
+            children: Vec::new(),
+            exit_code: None,
+            vmm,
+            kernel_stack_top: top,
+            scratch: PerCpuScratch::new(top),
+            user_entry: entry,
+            user_stack,
+            kernel_stack,
+        }
+    }
+}
+
+
+// Runs in ring 0 on the new task's own stack and address space, then iretq's to ring 3 and never returns.
+fn user_trampoline() -> ! {
+    let tid = crate::scheduler::current_tid();
+    
+    let (entry, stack) = {
+        let table = TASK_TABLE.lock();
+        let task = table.get(tid).expect("user_trampoline: current task missing");
+        let guard = task.lock();
+
+        (guard.user_entry, guard.user_stack)
+    };
+
+    unsafe { crate::arch::usermode::enter_user_mode(entry, stack) }
 }
 
 
