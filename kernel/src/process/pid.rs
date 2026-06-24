@@ -32,5 +32,6 @@ impl Tid {
         Self(id)
     }
 
+    pub fn from_u64(v: u64) -> Self { Self(v) }
     pub fn as_u64(self) -> u64 { self.0 }
 }

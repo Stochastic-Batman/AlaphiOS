@@ -48,22 +48,19 @@ extern "x86-interrupt" fn page_fault_handler(frame: InterruptStackFrame, error: 
         Err(_) => panic!("PAGE FAULT: could not read CR2\n{:#?}", frame),
     };
 
-    // Attempt to resolve the fault through the current task's VMM.
-    // If there is no current task yet (early boot) or the address is not in any known area, fall through to the panic.
-    let b = (|| -> Option<bool> {
+    let is_write = error.contains(PageFaultErrorCode::CAUSED_BY_WRITE);
+
+    let handled = (|| -> Option<bool> {
         let task_arc = crate::process::table::TASK_TABLE.lock().get(crate::scheduler::current_pid())?;
         let mut task = task_arc.lock();
         let mut frame_alloc = crate::memory::FRAME_ALLOCATOR.lock();
-
-        // We need a PageMapper. Re-create a view from the current CR3 + known offset.
         let phys_offset = x86_64::VirtAddr::new(crate::arch::paging::PHYS_MEM_OFFSET);
         let mut mapper = unsafe { crate::arch::paging::PageMapper::new(phys_offset) };
 
-        // Wrap this final line in Some() to fix the compiler error:
-        Some(task.vmm.handle_fault(fault_addr, &mut mapper, &mut *frame_alloc).is_ok())
+        Some(task.vmm.handle_fault(fault_addr, &mut mapper, &mut *frame_alloc, is_write).is_ok())
     })().unwrap_or(false);
 
-    if !b {
+    if !handled {
         panic!("PAGE FAULT\nAddress: {:?}\nError: {:?}\n{:#?}", fault_addr, error, frame);
     }
 }

@@ -9,7 +9,7 @@
 // RamDisk instance, see claim_virt_range below), back each 4 KiB page with
 // a frame from FrameAlloc, write through the mapping directly.
 use alloc::vec::Vec;
-use x86_64::structures::paging::{FrameAllocator, Page, PageTableFlags, PhysFrame, Size4KiB};
+use x86_64::structures::paging::{Page, PageTableFlags, PhysFrame, Size4KiB};
 use x86_64::VirtAddr;
 use crate::arch::paging::{PageMapper, PHYS_MEM_OFFSET};
 use crate::memory::frame_allocator::FrameAlloc;

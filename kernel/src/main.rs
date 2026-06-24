@@ -9,6 +9,9 @@ use core::fmt::Write;
 use core::panic::PanicInfo;
 use spin::Mutex;
 use uart_16550::SerialPort;
+use crate::sync::atomic::KernelAtomicUsize;
+use crate::process::table::TaskRegistry;
+
 
 mod arch;
 mod fs;
@@ -36,6 +39,10 @@ static SERIAL: Mutex<SerialPort> = unsafe {
     // stores the address - no I/O happens until `init()` is called below.
     Mutex::new(SerialPort::new(0x3F8))
 };
+
+
+static CLONE_FLAG: KernelAtomicUsize = KernelAtomicUsize::new(0);
+static FORK_FLAG: KernelAtomicUsize = KernelAtomicUsize::new(0);
 
 
 pub fn serial_init() {
@@ -128,7 +135,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             rdi: 0,
             rsi: 0,
             rdx: 0,
-            rcx: 0,
+               rcx: 0,
             rax: 0,
             user_rsp: 0,
         };
@@ -153,6 +160,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     fs_smoke_test();
     serial_println!("fs smoke test done");
     
+    clone_smoke_test();
+    serial_println!("clone smoke test done");
+    
+    fork_smoke_test();
+    serial_println!("fork smoke test done");
+
     use crate::process::task::Task;
    // scheduler::spawn(Task::new(scheduler_smoke_a, 0, None));
    // scheduler::spawn(Task::new(scheduler_smoke_b, 0, None));
@@ -278,7 +291,59 @@ fn ping_pong_task(my_turn: u8) -> ! {
 fn ping_pong_a() -> ! { ping_pong_task(0) }
 fn ping_pong_b() -> ! { ping_pong_task(1) }
 
+fn clone_child_task() -> ! {
+    CLONE_FLAG.store(1);
+    crate::process::lifecycle::exit(0);
+}
 
+fn clone_smoke_test() {
+    CLONE_FLAG.store(0);
+    let curr = scheduler::current_pid();
+    let thread = {
+        let table = crate::process::table::TASK_TABLE.lock();
+        table.get(curr).unwrap().lock().clone_thread(clone_child_task, 0)
+    };
+    let tid = thread.tid;
+    scheduler::spawn(thread);
+    crate::process::lifecycle::wait_tid(tid);
+    assert_eq!(CLONE_FLAG.load(), 1, "clone child did not run");
+    serial_println!("clone/join smoke test passed");
+}
+
+fn fork_child_task() -> ! {
+    FORK_FLAG.store(42);
+    crate::process::lifecycle::exit(0);
+}
+
+fn fork_smoke_test() {
+    use crate::arch::paging::{PageMapper, PHYS_MEM_OFFSET};
+    use crate::memory::FRAME_ALLOCATOR;
+
+    FORK_FLAG.store(0);
+    let curr = scheduler::current_pid();
+    let phys_offset = x86_64::VirtAddr::new(PHYS_MEM_OFFSET);
+    let mut parent_mapper = unsafe { PageMapper::new(phys_offset) };
+
+    let (child_l4, _child_mapper) = {
+        let mut fa = FRAME_ALLOCATOR.lock();
+        parent_mapper.clone_kernel_half(&mut *fa)
+    };
+
+    let child_pid = {
+        let table = crate::process::table::TASK_TABLE.lock();
+        let mut child = table.get(curr).unwrap().lock().fork_kernel(fork_child_task, 0);
+        child.cr3 = child_l4.start_address().as_u64();
+        let pid = child.pid;
+        drop(table);
+        scheduler::spawn(child);
+        pid
+    };
+
+    let code = crate::process::lifecycle::wait(child_pid);
+    assert_eq!(code, 0, "fork child exited with wrong code");
+    assert_eq!(FORK_FLAG.load(), 42, "fork child did not run");
+    serial_println!("fork smoke test passed");
+}
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {

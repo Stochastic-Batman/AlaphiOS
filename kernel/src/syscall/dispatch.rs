@@ -3,7 +3,8 @@ use alloc::collections::BTreeMap;
 use spin::Lazy;
 use crate::arch::syscall::{TrapFrame};
 use crate::process::lifecycle;
-use crate::process::pid::Pid;
+use crate::process::pid::{Pid, Tid};
+use crate::process::table::TaskRegistry;
 use crate::scheduler;
 use crate::sync::spinlock::Spinlock;
 use crate::sync::resource::{LockHandle, QueuedResource};
@@ -401,6 +402,63 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
             let pwd = unsafe { core::slice::from_raw_parts(pwd_ptr, pwd_len) };
             let ok = fs::FS.lock().verify_password(arg0 as u32, pwd);
             if ok { 0 } else { EACCES }
+        }
+        SYS_CLONE => {
+            const CLONE_VM: usize = 0x100;
+            if arg0 & CLONE_VM == 0 { return ENOSYS; }
+            let entry: fn() -> ! = unsafe { core::mem::transmute(arg1) };
+            let curr_pid = scheduler::current_pid();
+
+            let thread = {
+                let table = crate::process::table::TASK_TABLE.lock();
+                match table.get(curr_pid) {
+                    None => return EBADF,
+                    Some(arc) => arc.lock().clone_thread(entry, arg2 as u8),
+                }
+            };
+            
+            let tid = thread.tid.as_u64();
+            scheduler::spawn(thread);
+            
+            tid as isize
+        }
+        SYS_JOIN => {
+            lifecycle::wait_tid(Tid::from_u64(arg0 as u64)) as isize
+        }
+        SYS_FORK => {
+            let entry: fn() -> ! = unsafe { core::mem::transmute(arg0) };
+            let curr_pid = scheduler::current_pid();
+            let phys_offset = x86_64::VirtAddr::new(crate::arch::paging::PHYS_MEM_OFFSET);
+            let mut parent_mapper = unsafe { crate::arch::paging::PageMapper::new(phys_offset) };
+
+            let (child_l4, mut child_mapper) = {
+                let mut fa = crate::memory::FRAME_ALLOCATOR.lock();
+                parent_mapper.clone_kernel_half(&mut *fa)
+            };
+
+            let child_pid = {
+                let mut fa = crate::memory::FRAME_ALLOCATOR.lock();
+                let table = crate::process::table::TASK_TABLE.lock();
+                
+                let parent_arc = match table.get(curr_pid) {
+                    Some(a) => a,
+                    None => return EBADF,
+                };
+                
+                let mut parent = parent_arc.lock();
+                let child_vmm = parent.vmm.fork_cow(&mut child_mapper, &mut parent_mapper, &mut *fa);
+                let mut child = parent.fork_kernel(entry, parent.priority);
+                child.cr3 = child_l4.start_address().as_u64();
+                child.vmm = child_vmm;
+                let pid = child.pid;
+                
+                drop(parent); drop(table);
+                scheduler::spawn(child);
+            
+                pid
+            };
+
+            child_pid.as_u64() as isize
         }
         _ => ENOSYS,
     }

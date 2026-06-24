@@ -89,6 +89,55 @@ impl Task {
         }
         (top - 8 * 8) as u64
     }
+
+    pub fn clone_thread(&self, entry: fn() -> !, priority: u8) -> Task {
+        let mut kernel_stack = vec![0u8; KERNEL_STACK_SIZE];
+        let top = (kernel_stack.as_mut_ptr() as usize + kernel_stack.len()) as u64 & !15;
+        let rsp = Self::setup_stack(&mut kernel_stack, entry, top);
+
+        Task {
+            pid: self.pid,
+            tid: Tid::next(),
+            thread_group: self.thread_group,
+            state: TaskState::Ready,
+            rsp,
+            cr3: self.cr3,
+            preempt_count: 0,
+            priority,
+            parent: self.parent,
+            children: Vec::new(),
+            exit_code: None,
+            vmm: Vmm::new(),
+            kernel_stack_top: top,
+            scratch: PerCpuScratch::new(top),
+            kernel_stack,
+        }
+    }
+
+    pub fn fork_kernel(&self, entry: fn() -> !, priority: u8) -> Task {
+        let mut kernel_stack = vec![0u8; KERNEL_STACK_SIZE];
+        let top = (kernel_stack.as_mut_ptr() as usize + kernel_stack.len()) as u64 & !15;
+        let rsp = Self::setup_stack(&mut kernel_stack, entry, top);
+        let pid = Pid::next();
+        
+        Task {
+            pid,
+            tid: Tid::next(),
+            thread_group: pid,
+            state: TaskState::Ready,
+            rsp,
+            cr3: 0,  // set by SYS_FORK after clone_kernel_half
+            preempt_count: 0,
+            priority,
+            parent: Some(self.pid),
+            children: Vec::new(),
+            exit_code: None,
+            vmm: Vmm::new(),  // set by SYS_FORK after fork_cow
+            kernel_stack_top: top,
+            scratch: PerCpuScratch::new(top),
+            kernel_stack,
+        }
+    }
 }
 
 

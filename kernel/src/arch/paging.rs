@@ -52,6 +52,39 @@ impl PageMapper {
     pub fn flush_tlb_all(&self) {
         x86_64::instructions::tlb::flush_all();
     }
+
+    pub unsafe fn new_from_frame(frame: PhysFrame, phys_mem_offset: VirtAddr) -> Self {
+        let l4_virt = phys_mem_offset + frame.start_address().as_u64();
+        let inner = unsafe { OffsetPageTable::new(&mut *l4_virt.as_mut_ptr(), phys_mem_offset) };
+        Self { inner }
+    }
+
+    pub fn clone_kernel_half(&self, frame_alloc: &mut impl FrameAllocator<Size4KiB>) -> (PhysFrame, Self) {
+        let offset = VirtAddr::new(PHYS_MEM_OFFSET);
+        let new_frame = frame_alloc.allocate_frame().expect("OOM: L4 frame");
+
+        // zero first, then copy kernel half
+        unsafe { 
+            core::ptr::write_bytes((offset + new_frame.start_address().as_u64()).as_mut_ptr::<u8>(), 0, 4096); 
+        }
+
+        let (cur_frame, _) = Cr3::read();
+        let cur_l4: &PageTable = unsafe { &*(offset + cur_frame.start_address().as_u64()).as_ptr() };
+        let new_l4: &mut PageTable = unsafe { &mut *(offset + new_frame.start_address().as_u64()).as_mut_ptr() };
+
+        for i in 256..512 {
+            new_l4[i] = cur_l4[i].clone();
+        }
+
+        let child_mapper = unsafe { Self::new_from_frame(new_frame, offset) };
+        (new_frame, child_mapper)
+    }
+
+    pub fn remap_flags(&mut self, page: Page<Size4KiB>, new_flags: PageTableFlags) {
+        unsafe { 
+            self.inner.update_flags(page, new_flags).expect("remap_flags: page not mapped").flush();
+        }
+    }
 }
 
 
