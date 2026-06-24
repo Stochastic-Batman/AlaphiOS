@@ -83,7 +83,7 @@ alaphios/
 │   ├── build.rs                 # Assembles user-space binaries (user/init)
 │   └── src/
 │       ├── arch/                # x86-64-specific code
-│       ├── fs/                  # File system layers (logical → fatfs)
+│       ├── fs/                  # File system layers (logical -> fatfs)
 │       ├── io/                  # Device drivers, interrupt-driven I/O, ioctl
 │       ├── ipc/                 # Message passing, shared memory, pipes
 │       ├── main.rs              # Kernel entry point (_start / kernel_main)
