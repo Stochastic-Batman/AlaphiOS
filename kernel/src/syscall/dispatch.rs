@@ -19,6 +19,7 @@ use crate::ipc::table::IPC_TABLE;
 use crate::fs;
 use crate::fs::vfs::FsError;
 use crate::security::{self, AccessControl, Rights};
+use crate::io::device::{CharDevice, DEV_FD_OFFSET, IOCTL_SET_NONBLOCK, IOCTL_SET_BLOCK, DEVICE_TABLE};
 
 
 // Standard Kernel Error Codes (Negative isize for ABI boundary)
@@ -70,6 +71,36 @@ fn current_uid_gid() -> (u32, u32) {
 }
 
 
+const CONSOLE_DEV: usize = 0;
+
+fn dev_read(dev_idx: usize, buf: &mut [u8]) -> isize {
+    if dev_idx == CONSOLE_DEV {
+        let mut console = crate::io::console::CONSOLE.lock();
+        let mut n = 0;
+        for b in buf.iter_mut() {
+            match console.get() {
+                Some(ch) => { *b = ch; n += 1; }
+                None => break,
+            }
+        }
+        if n == 0 { EAGAIN } else { n as isize }
+    } else {
+        ENODEV
+    }
+}
+
+fn dev_write(dev_idx: usize, buf: &[u8]) -> isize {
+    if dev_idx == CONSOLE_DEV {
+        let mut console = crate::io::console::CONSOLE.lock();
+        for &b in buf {
+            console.put(b);
+        }
+        buf.len() as isize
+    } else {
+        ENODEV
+    }
+}
+
 unsafe fn str_from_user(ptr: usize, len: usize) -> Option<&'static str> {
     if ptr == 0 || len == 0 { return None; }
     let slice = unsafe { core::slice::from_raw_parts(ptr as *const u8, len) };
@@ -91,14 +122,14 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
     let arg4 = frame.r8  as usize;
 
     match nr {
-        SYS_GETPID  => scheduler::current_pid().as_u64() as isize,
+        SYS_GETPID => scheduler::current_pid().as_u64() as isize,
         SYS_GETPPID => scheduler::current_ppid().map(|p| p.as_u64() as isize).unwrap_or(-1),
-        SYS_GETTID  => scheduler::current_tid().as_u64() as isize,
-        SYS_YIELD   => { 
+        SYS_GETTID => scheduler::current_tid().as_u64() as isize,
+        SYS_YIELD => {
             scheduler::schedule();
-            0 
+            0
         }
-        SYS_EXIT    => lifecycle::exit(arg0 as i32),
+        SYS_EXIT => lifecycle::exit(arg0 as i32),
         SYS_WAITPID => lifecycle::wait(Pid::from_u64(arg0 as u64)) as isize,
         SYS_GETRESOURCE => {
             let res: Arc<dyn LockHandle> = Arc::new(QueuedResource::new());
@@ -254,27 +285,37 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
             }
         }
         SYS_READ => {
+            let fd = arg0 as u64;
             let buf_ptr = arg1 as *mut u8;
             let len = arg2;
             if len > 0 && buf_ptr.is_null() { return EFAULT; }
-            let pid = scheduler::current_pid();
-            let (uid, gid) = current_uid_gid();
             let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, len) };
-            match fs::FS.lock().read(arg0 as u64, pid, uid, gid, buf) {
-                Ok(n)  => n as isize,
-                Err(e) => fs_err(e),
+            if fd >= DEV_FD_OFFSET {
+                dev_read((fd - DEV_FD_OFFSET) as usize, buf)
+            } else {
+                let pid = scheduler::current_pid();
+                let (uid, gid) = current_uid_gid();
+                match fs::FS.lock().read(fd, pid, uid, gid, buf) {
+                    Ok(n)  => n as isize,
+                    Err(e) => fs_err(e),
+                }
             }
         }
         SYS_WRITE => {
+            let fd = arg0 as u64;
             let buf_ptr = arg1 as *const u8;
             let len = arg2;
             if len > 0 && buf_ptr.is_null() { return EFAULT; }
-            let pid = scheduler::current_pid();
-            let (uid, gid) = current_uid_gid();
             let buf = unsafe { core::slice::from_raw_parts(buf_ptr, len) };
-            match fs::FS.lock().write(arg0 as u64, pid, uid, gid, buf) {
-                Ok(n)  => n as isize,
-                Err(e) => fs_err(e),
+            if fd >= DEV_FD_OFFSET {
+                dev_write((fd - DEV_FD_OFFSET) as usize, buf)
+            } else {
+                let pid = scheduler::current_pid();
+                let (uid, gid) = current_uid_gid();
+                match fs::FS.lock().write(fd, pid, uid, gid, buf) {
+                    Ok(n)  => n as isize,
+                    Err(e) => fs_err(e),
+                }
             }
         }
         SYS_SEEK => {
@@ -284,6 +325,32 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
                 Err(e) => fs_err(e),
             }
         }
+        SYS_IOCTL => {
+            let fd = arg0 as u64;
+            if fd < DEV_FD_OFFSET { return ENODEV; }
+            let dev_idx = (fd - DEV_FD_OFFSET) as usize;
+            let cmd = arg1;
+            let mut dt = DEVICE_TABLE.lock();
+            match dt.get_mut(dev_idx) {
+                None => ENODEV,
+                Some(status) => match cmd {
+                    IOCTL_SET_NONBLOCK => { status.blocking = false; 0 }
+                    IOCTL_SET_BLOCK => { status.blocking = true; 0 }
+                    _ => ENOSYS,
+                }
+            }
+        }
+        SYS_OPEN_DEV => {
+            let name = unsafe { str_from_user(arg0, arg1) };
+            match name {
+                None => EFAULT,
+                Some(n) => match DEVICE_TABLE.lock().find(n) {
+                    Some(idx) => (idx as u64 + DEV_FD_OFFSET) as isize,
+                    None => ENODEV,
+                }
+            }
+        }
+        SYS_CLOSE_DEV => { 0 }
         SYS_CREATE => {
             let path = unsafe { str_from_user(arg0, arg1) };
             match path {

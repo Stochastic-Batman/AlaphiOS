@@ -118,6 +118,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     mount_boot_disk();
     load_system_domain();
     arch::paging::record_kernel_l4_entries();
+    init_devices();
     scheduler::init();
     seed_test_user();
     install_init_binary();
@@ -126,6 +127,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     sync_syscall_smoke_test();
     fs_smoke_test();
     security_smoke_test();
+    device_smoke_test();
     clone_smoke_test();
     fork_smoke_test();
     user_mode_smoke_test();
@@ -148,6 +150,10 @@ fn load_system_domain() {
     let mut guard = fs::FS.lock();
     let (disk, auth, perms) = guard.disk_and_overlays_mut().expect("disk not mounted");
     fs::system_domain::load_at_boot(disk, auth, perms);
+}
+
+fn init_devices() {
+    io::device::DEVICE_TABLE.lock().register("console");
 }
 
 fn seed_test_user() {
@@ -225,6 +231,18 @@ fn security_smoke_test() {
     assert!(r3.contains(Rights::EXECUTE));
 
     serial_println!("security smoke test passed");
+}
+
+fn device_smoke_test() {
+    use crate::io::device::{DEVICE_TABLE, CharDevice};
+    use crate::io::console::CONSOLE;
+
+    assert_eq!(DEVICE_TABLE.lock().find("console"), Some(0));
+    assert!(DEVICE_TABLE.lock().is_blocking(0));
+
+    CONSOLE.lock().put(b'!');
+
+    serial_println!("device smoke test passed");
 }
 
 fn clone_smoke_test() {

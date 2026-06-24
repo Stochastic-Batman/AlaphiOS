@@ -7,6 +7,25 @@ _start:
     mov $48, %eax           /* SYS_LOGIN */
     syscall
 
+    /* Test device open: SYS_OPEN_DEV("console", 7) */
+    lea devname(%rip), %rdi
+    mov $7, %esi
+    mov $22, %eax           /* SYS_OPEN_DEV */
+    syscall
+    mov %rax, %r13          /* save device handle */
+
+    /* Test ioctl: set non-blocking */
+    mov %r13, %rdi
+    mov $1, %esi            /* IOCTL_SET_NONBLOCK */
+    xor %edx, %edx
+    mov $21, %eax           /* SYS_IOCTL */
+    syscall
+
+    /* Close device */
+    mov %r13, %rdi
+    mov $23, %eax           /* SYS_CLOSE_DEV */
+    syscall
+
     /* Test brk: query, grow, write to heap */
     xor %edi, %edi
     mov $17, %eax           /* SYS_BRK */
@@ -45,3 +64,6 @@ sig_handler:
 
 password:
     .ascii "test"
+
+devname:
+    .ascii "console"

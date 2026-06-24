@@ -56,6 +56,7 @@ pub struct RamDisk {
     base: VirtAddr,
     byte_len: usize,
     sector_size: usize,
+    cursor: u64,
     frames: Vec<PhysFrame<Size4KiB>>,  // retained so the mapping can be torn down later if needed
 }
 
@@ -92,7 +93,7 @@ impl RamDisk {
             core::ptr::write_bytes(base.as_mut_ptr::<u8>(), 0, byte_len);
         }
 
-        Self { base, byte_len, sector_size, frames }
+        Self { base, byte_len, sector_size, cursor: 0, frames }
     }
 
     fn sector_ptr(&self, lba: u64) -> *mut u8 {
@@ -135,5 +136,44 @@ impl DiskDevice for RamDisk {
             core::ptr::copy_nonoverlapping(buf.as_ptr(), self.sector_ptr(lba), self.sector_size);
         }
         Ok(())
+    }
+}
+
+
+impl crate::io::device::BlockDevice for RamDisk {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, crate::io::device::DeviceError> {
+        let offset = self.cursor as usize;
+        let avail = self.byte_len.saturating_sub(offset);
+        let n = buf.len().min(avail);
+        if n == 0 { return Ok(0); }
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                (self.base.as_u64() as usize + offset) as *const u8,
+                buf.as_mut_ptr(),
+                n,
+            );
+        }
+        self.cursor += n as u64;
+        Ok(n)
+    }
+
+    fn write(&mut self, buf: &[u8]) -> Result<usize, crate::io::device::DeviceError> {
+        let offset = self.cursor as usize;
+        let avail = self.byte_len.saturating_sub(offset);
+        let n = buf.len().min(avail);
+        if n == 0 { return Ok(0); }
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                buf.as_ptr(),
+                (self.base.as_u64() as usize + offset) as *mut u8,
+                n,
+            );
+        }
+        self.cursor += n as u64;
+        Ok(n)
+    }
+
+    fn seek(&mut self, offset: u64) {
+        self.cursor = offset;
     }
 }
