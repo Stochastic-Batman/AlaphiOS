@@ -61,6 +61,12 @@ extern "x86-interrupt" fn page_fault_handler(frame: InterruptStackFrame, error: 
     })().unwrap_or(false);
 
     if !handled {
+        use crate::process::loader::{USER_STACK_TOP, USER_STACK_SIZE};
+        let guard_end = USER_STACK_TOP - USER_STACK_SIZE;
+        let guard_start = guard_end - 4096;
+        if fault_addr.as_u64() >= guard_start && fault_addr.as_u64() < guard_end {
+            panic!("USER STACK OVERFLOW at {:?}\n{:#?}", fault_addr, frame);
+        }
         panic!("PAGE FAULT\nAddress: {:?}\nError: {:?}\n{:#?}", fault_addr, error, frame);
     }
 }

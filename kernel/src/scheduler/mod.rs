@@ -50,7 +50,6 @@ pub fn schedule() {
     SCHEDULER.lock().should_reschedule();
     let switch_pair = SCHEDULER.lock().prepare_switch();
     if let Some((out, inc)) = switch_pair {
-        // rsp0 is where the CPU lands on the next ring-3 trap, and CR3 itself is switched inside switch_to once we stand on the incoming kernel stack.
         unsafe {
             crate::arch::gdt::set_kernel_stack(VirtAddr::new((*inc).kernel_stack_top));
             crate::arch::context::switch_to(out, inc);

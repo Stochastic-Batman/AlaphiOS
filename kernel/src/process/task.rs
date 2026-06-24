@@ -10,7 +10,16 @@ use x86_64::registers::control::Cr3;
 
 
 const KERNEL_STACK_SIZE: usize = 64 * 1024;
+const GUARD_SIZE: usize = 4096;
+const GUARD_POISON: u8 = 0xDE;
 static PREEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
+
+fn alloc_kernel_stack() -> (Vec<u8>, u64) {
+    let mut stack = vec![0u8; KERNEL_STACK_SIZE + GUARD_SIZE];
+    for b in &mut stack[..GUARD_SIZE] { *b = GUARD_POISON; }
+    let top = (stack.as_mut_ptr() as usize + stack.len()) as u64 & !15;
+    (stack, top)
+}
 
 
 #[unsafe(naked)]
@@ -55,8 +64,7 @@ pub struct Task {
 
 impl Task {
     pub fn new(entry: fn() -> !, priority: u8, parent: Option<Pid>) -> Self {
-        let mut kernel_stack = vec![0u8; KERNEL_STACK_SIZE];
-        let kernel_stack_top = (kernel_stack.as_mut_ptr() as usize + kernel_stack.len()) as u64 & !15;
+        let (mut kernel_stack, kernel_stack_top) = alloc_kernel_stack();
         let rsp = Self::setup_stack(&mut kernel_stack, entry, kernel_stack_top);
         let pid = Pid::next();
 
@@ -100,8 +108,7 @@ impl Task {
     }
 
     pub fn clone_thread(&self, entry: fn() -> !, priority: u8) -> Task {
-        let mut kernel_stack = vec![0u8; KERNEL_STACK_SIZE];
-        let top = (kernel_stack.as_mut_ptr() as usize + kernel_stack.len()) as u64 & !15;
+        let (mut kernel_stack, top) = alloc_kernel_stack();
         let rsp = Self::setup_stack(&mut kernel_stack, entry, top);
 
         Task {
@@ -128,8 +135,7 @@ impl Task {
     }
 
     pub fn fork_kernel(&self, entry: fn() -> !, priority: u8) -> Task {
-        let mut kernel_stack = vec![0u8; KERNEL_STACK_SIZE];
-        let top = (kernel_stack.as_mut_ptr() as usize + kernel_stack.len()) as u64 & !15;
+        let (mut kernel_stack, top) = alloc_kernel_stack();
         let rsp = Self::setup_stack(&mut kernel_stack, entry, top);
         let pid = Pid::next();
         
@@ -157,8 +163,7 @@ impl Task {
     }
 
     pub fn new_user(entry: u64, user_stack: u64, cr3: u64, vmm: Vmm, priority: u8) -> Self {
-        let mut kernel_stack = vec![0u8; KERNEL_STACK_SIZE];
-        let top = (kernel_stack.as_mut_ptr() as usize + kernel_stack.len()) as u64 & !15;
+        let (mut kernel_stack, top) = alloc_kernel_stack();
         let rsp = Self::setup_stack(&mut kernel_stack, user_trampoline, top);
         let pid = Pid::next();
 
@@ -182,6 +187,13 @@ impl Task {
             heap_start: 0,
             brk: 0,
             kernel_stack,
+        }
+    }
+
+    pub fn check_stack_canary(&self) {
+        let canary = &self.kernel_stack[GUARD_SIZE - 8..GUARD_SIZE];
+        if canary.iter().any(|&b| b != GUARD_POISON) {
+            panic!("KERNEL STACK OVERFLOW: guard canary corrupted for tid={}", self.tid.as_u64());
         }
     }
 }
