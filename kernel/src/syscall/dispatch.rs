@@ -410,6 +410,7 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
         }
         SYS_CLONE => {
             const CLONE_VM: usize = 0x100;
+            const CLONE_SIGHAND: usize = 0x800;
             if arg0 & CLONE_VM == 0 { return ENOSYS; }
             let entry: fn() -> ! = unsafe { core::mem::transmute(arg1) };
             let curr_tid = scheduler::current_tid();
@@ -418,13 +419,20 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
                 let table = crate::process::table::TASK_TABLE.lock();
                 match table.get(curr_tid) {
                     None => return EBADF,
-                    Some(arc) => arc.lock().clone_thread(entry, arg2 as u8),
+                    Some(arc) => {
+                        let parent = arc.lock();
+                        let mut t = parent.clone_thread(entry, arg2 as u8);
+                        if arg0 & CLONE_SIGHAND != 0 {
+                            t.signals.handlers = parent.signals.handlers;
+                        }
+                        t
+                    }
                 }
             };
-            
+
             let tid = thread.tid.as_u64();
             scheduler::spawn(thread);
-            
+
             tid as isize
         }
         SYS_JOIN => {
@@ -464,6 +472,56 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
             };
 
             child_pid.as_u64() as isize
+        }
+        SYS_KILL => {
+            let target_pid = Pid::from_u64(arg0 as u64);
+            let signum = arg1 as u8;
+            if signum as usize >= crate::process::signal::MAX_SIGNALS { return EFAULT; }
+
+            let mut found = false;
+            let mut wake_tid = None;
+
+            {
+                let table = crate::process::table::TASK_TABLE.lock();
+                for tid in table.all_tids() {
+                    if let Some(task_arc) = table.get(tid) {
+                        let mut task = task_arc.lock();
+                        if task.pid == target_pid {
+                            task.signals.set_pending(signum);
+                            if matches!(task.state, crate::process::task::TaskState::Blocked) {
+                                wake_tid = Some(tid);
+                            }
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if let Some(tid) = wake_tid {
+                scheduler::unblock_tid(tid);
+            }
+            if found { 0 } else { ENOENT }
+        }
+        SYS_SIGRETURN => {
+            let saved_ptr = (frame.user_rsp + 16) as *const crate::arch::syscall::TrapFrame;
+            let saved = unsafe { core::ptr::read(saved_ptr) };
+            *frame = saved;
+            frame.rax as isize
+        }
+        SYS_SIGNAL => {
+            let signum = arg0 as u8;
+            let handler = arg1 as u64;
+            if signum as usize >= crate::process::signal::MAX_SIGNALS { return EFAULT; }
+
+            let tid = scheduler::current_tid();
+            let table = crate::process::table::TASK_TABLE.lock();
+            if let Some(task_arc) = table.get(tid) {
+                task_arc.lock().signals.set_handler(signum, handler);
+                0
+            } else {
+                EBADF
+            }
         }
         SYS_BRK => {
             let new_brk = arg0 as u64;

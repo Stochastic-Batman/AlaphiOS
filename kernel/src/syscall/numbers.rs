@@ -76,4 +76,5 @@ pub const SYS_REVOKE: usize = 52;
 // Process signal / cancellation 
 pub const SYS_KILL: usize = 53;  // send signal to task (deferred cancellation)
 pub const SYS_SIGRETURN: usize = 54;  // return from signal handler
-pub const SYSCALL_COUNT: usize = 55;  // total; keep in sync when adding entries
+pub const SYS_SIGNAL: usize = 55;  // register signal handler
+pub const SYSCALL_COUNT: usize = 56;

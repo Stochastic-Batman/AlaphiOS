@@ -116,6 +116,10 @@ unsafe extern "C" fn syscall_entry() {
         "mov rsi, rsp",  // &TrapFrame
         "call syscall_handler",
 
+        "mov [rsp + 112], rax",  // store return value into TrapFrame.rax
+        "mov rdi, rsp",
+        "call deliver_pending_signal",
+
         // Restore, in reverse push order.
         "pop r15",
         "pop r14",
@@ -131,8 +135,8 @@ unsafe extern "C" fn syscall_entry() {
         "pop rsi",
         "pop rdx",
         "pop rcx",
-        "add rsp, 8",     // discard saved rax (return value already in rax from syscall_handler)
-        "pop rsp",        // restore user_rsp directly into rsp -- back on user stack
+        "pop rax",
+        "pop rsp",
 
         "swapgs",
         "sysretq",

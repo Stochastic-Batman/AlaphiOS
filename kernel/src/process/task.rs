@@ -4,6 +4,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::arch::syscall::PerCpuScratch;
 use crate::memory::vmm::Vmm;
 use crate::process::pid::{Pid, Tid};
+use crate::process::signal::SignalState;
 use crate::process::table::{TaskRegistry, TASK_TABLE};
 use x86_64::registers::control::Cr3;
 
@@ -58,6 +59,7 @@ pub struct Task {
     pub user_stack: u64,  // ring-3 RSP; 0 for pure kernel tasks
     pub heap_start: u64,  // first page after code; 0 for kernel tasks
     pub brk: u64,         // current program break (grows from heap_start)
+    pub signals: SignalState,
     kernel_stack: Vec<u8>,
 }
 
@@ -87,6 +89,7 @@ impl Task {
             user_stack: 0,
             heap_start: 0,
             brk: 0,
+            signals: SignalState::new(),
             kernel_stack,
         }
     }
@@ -130,6 +133,7 @@ impl Task {
             user_stack: 0,
             heap_start: 0,
             brk: 0,
+            signals: SignalState::new(),
             kernel_stack,
         }
     }
@@ -158,6 +162,7 @@ impl Task {
             user_stack: 0,
             heap_start: self.heap_start,
             brk: self.brk,
+            signals: SignalState { pending: 0, handlers: self.signals.handlers },
             kernel_stack,
         }
     }
@@ -186,6 +191,7 @@ impl Task {
             user_stack,
             heap_start: 0,
             brk: 0,
+            signals: SignalState::new(),
             kernel_stack,
         }
     }
