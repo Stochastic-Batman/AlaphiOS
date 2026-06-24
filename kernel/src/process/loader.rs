@@ -2,6 +2,7 @@
 
 // flat binary has no headers: the bytes ARE the code, linked to run at a fixed virtual base.
 // build a fresh address space, eagerly map the code (its bytes must physically exist before the first instruction fetch), and hand the stack to the demand-pager via a single anonymous VmArea - only stack pages that get touched ever cost a frame.
+use alloc::vec;
 use x86_64::VirtAddr;
 use x86_64::structures::paging::{Page, PageTableFlags};
 use crate::arch::paging::{PageMapper, PHYS_MEM_OFFSET};
@@ -57,4 +58,21 @@ pub fn load_flat(bytes: &[u8], priority: u8) -> Task {
     });
 
     Task::new_user(USER_CODE_BASE, USER_STACK_TOP, l4_frame.start_address().as_u64(), vmm, priority)
+}
+
+
+pub fn load_path(path: &str, priority: u8) -> Task {
+    let pid = crate::scheduler::current_pid();
+    let mut fs = crate::fs::FS.lock();
+
+    let size = fs.stat(path).expect("load_path: stat failed").size as usize;
+    assert!(size > 0, "load_path: file is empty");
+
+    let fd = fs.open(path, pid).expect("load_path: open failed");
+    let mut buf = vec![0u8; size];
+    let n = fs.read(fd, pid, &mut buf).expect("load_path: read failed");
+    fs.close(fd, pid).expect("load_path: close failed");
+
+    assert_eq!(n, size, "load_path: short read");
+    load_flat(&buf, priority)
 }

@@ -119,6 +119,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     load_system_domain();
     arch::paging::record_kernel_l4_entries();
     scheduler::init();
+    install_init_binary();
  
     io_smoke_test();
     sync_syscall_smoke_test();
@@ -145,6 +146,15 @@ fn load_system_domain() {
     let mut guard = fs::FS.lock();
     let (disk, auth, perms) = guard.disk_and_overlays_mut().expect("disk not mounted");
     fs::system_domain::load_at_boot(disk, auth, perms);
+}
+
+fn install_init_binary() {
+    static INIT_BIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/init.bin"));
+    let pid = scheduler::current_pid();
+    let mut fs = fs::FS.lock();
+    let fd = fs.create("/init", pid).expect("failed to create /init");
+    fs.write(fd, pid, INIT_BIN).expect("failed to write /init");
+    fs.close(fd, pid).expect("failed to close /init");
 }
  
 fn io_smoke_test() {
@@ -217,20 +227,8 @@ fn fork_smoke_test() {
 }
  
 fn user_mode_smoke_test() {
-    // A flat ring-3 program: ask the kernel for our pid, then exit with it.
-    //   B8 03 00 00 00   mov eax, 3      ; SYS_GETPID
-    //   0F 05            syscall         ; -> pid in eax
-    //   89 C7            mov edi, eax    ; exit code = pid
-    //   B8 01 00 00 00   mov eax, 1      ; SYS_EXIT
-    //   0F 05            syscall
-    //   EB FE            jmp $           ; never reached
-    static PROG: [u8; 18] = [
-        0xB8, 0x03, 0x00, 0x00, 0x00, 0x0F, 0x05, 0x89, 0xC7,
-        0xB8, 0x01, 0x00, 0x00, 0x00, 0x0F, 0x05, 0xEB, 0xFE,
-    ];
-
-    let mut task = process::loader::load_flat(&PROG, 0);
-    task.parent = Some(scheduler::current_pid());  // so exit() wakes us from wait()
+    let mut task = process::loader::load_path("/init", 0);
+    task.parent = Some(scheduler::current_pid());
     let pid = task.pid;
     scheduler::spawn(task);
 

@@ -80,6 +80,7 @@ alaphios/
 ├── bootloader-config/           # bootloader crate configuration
 ├── kernel/                      # Kernel crate (#![no_std])
 │   ├── Cargo.toml
+│   ├── build.rs                 # Assembles user-space binaries (user/init)
 │   └── src/
 │       ├── arch/                # x86-64-specific code
 │       ├── fs/                  # File system layers (logical → fatfs)
@@ -87,15 +88,15 @@ alaphios/
 │       ├── ipc/                 # Message passing, shared memory, pipes
 │       ├── main.rs              # Kernel entry point (_start / kernel_main)
 │       ├── memory/              # Buddy allocator, frame allocator, demand paging
-│       ├── process/             # PCB, task abstraction, fork/join
+│       ├── process/             # PCB, task abstraction, fork/join, flat-binary loader
 │       ├── scheduler/           # MLFQ scheduler
 │       ├── security/            # Access matrix, RBAC, auth.db interface
 │       ├── sync/                # Spinlocks, mutexes, condition variables, monitors
 │       └── syscall/             # Syscall dispatch table
-└── tools/                       # Host-side utilities (disk image creation, etc.)
+├── tools/                       # Host-side utilities (disk image creation, etc.)
+└── user/                        # User-space programs (flat binaries)
+    └── init/                    # First process loaded from FAT32 at boot
 ```
-
-> The directory structure above reflects the intended organisation at the start of the project. It will probably evolve as implementation progresses.
 
 ## Prerequisites & Setup
 
