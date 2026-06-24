@@ -57,6 +57,8 @@ pub struct Task {
     pub scratch: PerCpuScratch,
     pub user_entry: u64,  // ring-3 RIP; 0 for pure kernel tasks
     pub user_stack: u64,  // ring-3 RSP; 0 for pure kernel tasks
+    pub uid: u32,
+    pub gid: u32,
     pub heap_start: u64,  // first page after code; 0 for kernel tasks
     pub brk: u64,         // current program break (grows from heap_start)
     pub signals: SignalState,
@@ -87,6 +89,8 @@ impl Task {
             scratch: PerCpuScratch::new(kernel_stack_top),
             user_entry: 0,
             user_stack: 0,
+            uid: 0,
+            gid: 0,
             heap_start: 0,
             brk: 0,
             signals: SignalState::new(),
@@ -131,6 +135,8 @@ impl Task {
             scratch: PerCpuScratch::new(top),
             user_entry: 0,
             user_stack: 0,
+            uid: self.uid,
+            gid: self.gid,
             heap_start: 0,
             brk: 0,
             signals: SignalState::new(),
@@ -160,6 +166,8 @@ impl Task {
             scratch: PerCpuScratch::new(top),
             user_entry: 0,
             user_stack: 0,
+            uid: self.uid,
+            gid: self.gid,
             heap_start: self.heap_start,
             brk: self.brk,
             signals: SignalState { pending: 0, handlers: self.signals.handlers },
@@ -189,6 +197,8 @@ impl Task {
             scratch: PerCpuScratch::new(top),
             user_entry: entry,
             user_stack,
+            uid: 0,
+            gid: 0,
             heap_start: 0,
             brk: 0,
             signals: SignalState::new(),

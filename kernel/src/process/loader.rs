@@ -72,9 +72,9 @@ pub fn load_path(path: &str, priority: u8) -> Task {
     let size = fs.stat(path).expect("load_path: stat failed").size as usize;
     assert!(size > 0, "load_path: file is empty");
 
-    let fd = fs.open(path, pid).expect("load_path: open failed");
+    let fd = fs.open(path, pid, 0, 0).expect("load_path: open failed");
     let mut buf = vec![0u8; size];
-    let n = fs.read(fd, pid, &mut buf).expect("load_path: read failed");
+    let n = fs.read(fd, pid, 0, 0, &mut buf).expect("load_path: read failed");
     fs.close(fd, pid).expect("load_path: close failed");
 
     assert_eq!(n, size, "load_path: short read");

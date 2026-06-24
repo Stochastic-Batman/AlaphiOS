@@ -18,6 +18,7 @@ use crate::syscall::numbers::*;
 use crate::ipc::table::IPC_TABLE;
 use crate::fs;
 use crate::fs::vfs::FsError;
+use crate::security::{self, AccessControl, Rights};
 
 
 // Standard Kernel Error Codes (Negative isize for ABI boundary)
@@ -52,6 +53,19 @@ fn fs_err(e: FsError) -> isize {
         FsError::NotADirectory => ENOTDIR,
         FsError::IsADirectory => EISDIR,
         FsError::NotMounted => ENODEV,
+    }
+}
+
+
+fn current_uid_gid() -> (u32, u32) {
+    let tid = scheduler::current_tid();
+    let table = crate::process::table::TASK_TABLE.lock();
+    match table.get(tid) {
+        Some(arc) => {
+            let task = arc.lock();
+            (task.uid, task.gid)
+        }
+        None => (0, 0),
     }
 }
 
@@ -224,7 +238,8 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
                 None => EFAULT,
                 Some(p) => {
                     let pid = scheduler::current_pid();
-                    match fs::FS.lock().open(p, pid) {
+                    let (uid, gid) = current_uid_gid();
+                    match fs::FS.lock().open(p, pid, uid, gid) {
                         Ok(fd) => fd as isize,
                         Err(e) => fs_err(e),
                     }
@@ -243,8 +258,9 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
             let len = arg2;
             if len > 0 && buf_ptr.is_null() { return EFAULT; }
             let pid = scheduler::current_pid();
+            let (uid, gid) = current_uid_gid();
             let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, len) };
-            match fs::FS.lock().read(arg0 as u64, pid, buf) {
+            match fs::FS.lock().read(arg0 as u64, pid, uid, gid, buf) {
                 Ok(n)  => n as isize,
                 Err(e) => fs_err(e),
             }
@@ -254,8 +270,9 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
             let len = arg2;
             if len > 0 && buf_ptr.is_null() { return EFAULT; }
             let pid = scheduler::current_pid();
+            let (uid, gid) = current_uid_gid();
             let buf = unsafe { core::slice::from_raw_parts(buf_ptr, len) };
-            match fs::FS.lock().write(arg0 as u64, pid, buf) {
+            match fs::FS.lock().write(arg0 as u64, pid, uid, gid, buf) {
                 Ok(n)  => n as isize,
                 Err(e) => fs_err(e),
             }
@@ -337,6 +354,30 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
                 }
             }
         }
+        SYS_CHOWN => {
+            let path = unsafe { str_from_user(arg0, arg1) };
+            match path {
+                None => EFAULT,
+                Some(p) => {
+                    let new_uid = arg2 as u32;
+                    let new_gid = arg3 as u32;
+                    let mut fsg = fs::FS.lock();
+                    if let Some(entry) = fsg.perms.get_mut(p) {
+                        entry.uid = new_uid;
+                        entry.gid = new_gid;
+                    } else {
+                        fsg.perms.set(p.into(), crate::fs::overlay::PermEntry {
+                            uid: new_uid,
+                            gid: new_gid,
+                            owner_rwx: crate::fs::overlay::Rwx(0b111),
+                            group_rwx: crate::fs::overlay::Rwx(0b101),
+                            world_rwx: crate::fs::overlay::Rwx(0b101),
+                        });
+                    }
+                    0
+                }
+            }
+        }
         SYS_MARK_SHARED => {
             let path = unsafe { str_from_user(arg0, arg1) };
             match path {
@@ -401,12 +442,60 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
             }
         }
         SYS_LOGIN => {
+            let uid_arg = arg0 as u32;
             let pwd_ptr = arg1 as *const u8;
             let pwd_len = arg2;
             if pwd_ptr.is_null() || pwd_len == 0 { return EFAULT; }
             let pwd = unsafe { core::slice::from_raw_parts(pwd_ptr, pwd_len) };
-            let ok = fs::FS.lock().verify_password(arg0 as u32, pwd);
-            if ok { 0 } else { EACCES }
+            let ok = fs::FS.lock().verify_password(uid_arg, pwd);
+            if ok {
+                let tid = scheduler::current_tid();
+                let table = crate::process::table::TASK_TABLE.lock();
+                if let Some(arc) = table.get(tid) {
+                    let mut task = arc.lock();
+                    task.uid = uid_arg;
+                    task.gid = uid_arg;
+                }
+                0
+            } else {
+                EACCES
+            }
+        }
+        SYS_LOGOUT => {
+            let tid = scheduler::current_tid();
+            let table = crate::process::table::TASK_TABLE.lock();
+            if let Some(arc) = table.get(tid) {
+                let mut task = arc.lock();
+                task.uid = 0;
+                task.gid = 0;
+            }
+            0
+        }
+        SYS_ACCESS => {
+            let domain = arg0 as u32;
+            let object = arg1 as u64;
+            let rights = security::ACCESS_CONTROL.lock().access(domain, object);
+            rights.0 as isize
+        }
+        SYS_GRANT => {
+            let target = arg0 as u32;
+            let object = arg1 as u64;
+            let rights = Rights(arg2 as u32);
+            let (uid, _) = current_uid_gid();
+            match security::ACCESS_CONTROL.lock().grant(uid, target, object, rights) {
+                Ok(()) => 0,
+                Err(()) => EACCES,
+            }
+        }
+        SYS_REVOKE => {
+            let target = arg0 as u32;
+            let object = arg1 as u64;
+            let rights = Rights(arg2 as u32);
+            let (uid, _) = current_uid_gid();
+            match security::ACCESS_CONTROL.lock().revoke(uid, target, object, rights) {
+                Ok(()) => 0,
+                Err(()) => EACCES,
+            }
         }
         SYS_CLONE => {
             const CLONE_VM: usize = 0x100;

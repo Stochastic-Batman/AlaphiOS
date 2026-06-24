@@ -79,24 +79,32 @@ impl LogicalFs {
         self.fcbs.paths().any(|p| p != path && p.to_lowercase() == lower)
     }
 
-    fn check_perm(&self, path: &str, _pid: Pid, want_write: bool) -> Result<(), FsError> {
+    fn check_perm(&self, path: &str, uid: u32, gid: u32, want_write: bool) -> Result<(), FsError> {
+        if uid == 0 { return Ok(()); }
         let Some(entry) = self.perms.get(path) else { return Ok(()) };
-        if want_write && !entry.world_rwx.can_write() {
+        let rwx = if uid == entry.uid {
+            entry.owner_rwx
+        } else if gid == entry.gid {
+            entry.group_rwx
+        } else {
+            entry.world_rwx
+        };
+        if want_write && !rwx.can_write() {
             return Err(FsError::PermissionDenied);
         }
-        if !want_write && !entry.world_rwx.can_read() {
+        if !want_write && !rwx.can_read() {
             return Err(FsError::PermissionDenied);
         }
         Ok(())
     }
 
 
-    pub fn open(&mut self, path: &str, pid: Pid) -> Result<u64, FsError> {
+    pub fn open(&mut self, path: &str, pid: Pid, uid: u32, gid: u32) -> Result<u64, FsError> {
         if self.case_conflict(path) {
             return Err(FsError::AlreadyExists);
         }
 
-        self.check_perm(path, pid, false)?;
+        self.check_perm(path, uid, gid, false)?;
 
         let fat_path = Self::to_fat_path(path)?;
         {
@@ -131,9 +139,9 @@ impl LogicalFs {
         Ok(())
     }
 
-    pub fn read(&mut self, fd: u64, pid: Pid, buf: &mut [u8]) -> Result<usize, FsError> {
+    pub fn read(&mut self, fd: u64, pid: Pid, uid: u32, gid: u32, buf: &mut [u8]) -> Result<usize, FsError> {
         let path = self.fds.table_for(pid).get(fd).map(|e| e.path.clone()).ok_or(FsError::NotOpen)?;
-        self.check_perm(&path, pid, false)?;
+        self.check_perm(&path, uid, gid, false)?;
 
         let cursor = self.fcbs.get_mut(&path).ok_or(FsError::NotOpen)?.cursor;
         let fat_path = Self::to_fat_path(&path)?;
@@ -149,7 +157,7 @@ impl LogicalFs {
         Ok(n)
     }
 
-    pub fn write(&mut self, fd: u64, pid: Pid, buf: &[u8]) -> Result<usize, FsError> {
+    pub fn write(&mut self, fd: u64, pid: Pid, uid: u32, gid: u32, buf: &[u8]) -> Result<usize, FsError> {
         let path = self.fds.table_for(pid).get(fd).map(|e| e.path.clone()).ok_or(FsError::NotOpen)?;
 
         {
@@ -158,7 +166,7 @@ impl LogicalFs {
                 return Err(FsError::IsShared);
             }
         }
-        self.check_perm(&path, pid, true)?;
+        self.check_perm(&path, uid, gid, true)?;
 
         let cursor = self.fcbs.get_mut(&path).ok_or(FsError::NotOpen)?.cursor;
         let fat_path = Self::to_fat_path(&path)?;

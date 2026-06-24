@@ -57,6 +57,19 @@ pub struct AuthEntry {
     pub hash: [u8; 32],  // salt concatenated password
 }
 
+impl AuthEntry {
+    pub fn new(uid: u32, password: &[u8]) -> Self {
+        let salt = [0u8; 16];
+        let mut hasher = Sha256::new();
+        hasher.update(salt);
+        hasher.update(password);
+        let result = hasher.finalize();
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&result);
+        Self { uid, salt, hash }
+    }
+}
+
 pub struct AuthDb {
     entries: BTreeMap<u32, AuthEntry>,
 }

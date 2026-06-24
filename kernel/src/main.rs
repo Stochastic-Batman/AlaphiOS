@@ -119,11 +119,13 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     load_system_domain();
     arch::paging::record_kernel_l4_entries();
     scheduler::init();
+    seed_test_user();
     install_init_binary();
  
     io_smoke_test();
     sync_syscall_smoke_test();
     fs_smoke_test();
+    security_smoke_test();
     clone_smoke_test();
     fork_smoke_test();
     user_mode_smoke_test();
@@ -148,12 +150,17 @@ fn load_system_domain() {
     fs::system_domain::load_at_boot(disk, auth, perms);
 }
 
+fn seed_test_user() {
+    let entry = fs::overlay::AuthEntry::new(1, b"test");
+    fs::FS.lock().auth.insert(entry);
+}
+
 fn install_init_binary() {
     static INIT_BIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/init.bin"));
     let pid = scheduler::current_pid();
     let mut fs = fs::FS.lock();
     let fd = fs.create("/init", pid).expect("failed to create /init");
-    fs.write(fd, pid, INIT_BIN).expect("failed to write /init");
+    fs.write(fd, pid, 0, 0, INIT_BIN).expect("failed to write /init");
     fs.close(fd, pid).expect("failed to close /init");
 }
  
@@ -184,16 +191,42 @@ fn fs_smoke_test() {
     let pid = scheduler::current_pid();
     let mut fs = fs::FS.lock();
     let fd = fs.create("/hello.txt", pid).expect("create failed");
-    fs.write(fd, pid, b"hi").expect("write failed");
+    fs.write(fd, pid, 0, 0, b"hi").expect("write failed");
     fs.close(fd, pid).expect("close failed");
-    let fd = fs.open("/hello.txt", pid).expect("reopen failed");
+    let fd = fs.open("/hello.txt", pid, 0, 0).expect("reopen failed");
     let mut buf = [0u8; 2];
-    fs.read(fd, pid, &mut buf).expect("read failed");
+    fs.read(fd, pid, 0, 0, &mut buf).expect("read failed");
     assert_eq!(&buf, b"hi");
     fs.close(fd, pid).expect("close failed");
     serial_println!("fs smoke test passed");
 }
  
+fn security_smoke_test() {
+    use crate::security::{AccessControl, Rights, ACCESS_CONTROL};
+
+    let mut ac = ACCESS_CONTROL.lock();
+
+    ac.set_rights(1, 42, Rights(Rights::READ | Rights::WRITE | Rights::OWNER));
+    let r = ac.access(1, 42);
+    assert!(r.contains(Rights::READ));
+    assert!(r.contains(Rights::WRITE));
+    assert!(r.contains(Rights::OWNER));
+
+    assert!(ac.grant(1, 2, 42, Rights(Rights::READ)).is_ok());
+    assert!(ac.access(2, 42).contains(Rights::READ));
+
+    assert!(ac.revoke(1, 2, 42, Rights(Rights::READ)).is_ok());
+    assert!(!ac.access(2, 42).contains(Rights::READ));
+
+    ac.define_role(1, Rights(Rights::READ | Rights::EXECUTE));
+    ac.assign_role(3, 1);
+    let r3 = ac.access(3, 99);
+    assert!(r3.contains(Rights::READ));
+    assert!(r3.contains(Rights::EXECUTE));
+
+    serial_println!("security smoke test passed");
+}
+
 fn clone_smoke_test() {
     CLONE_FLAG.store(0);
     let curr = scheduler::current_tid();

@@ -1,5 +1,12 @@
 .globl _start
 _start:
+    /* Test login: SYS_LOGIN(uid=1, password_ptr, password_len) */
+    mov $1, %edi
+    lea password(%rip), %rsi
+    mov $4, %edx
+    mov $48, %eax           /* SYS_LOGIN */
+    syscall
+
     /* Test brk: query, grow, write to heap */
     xor %edi, %edi
     mov $17, %eax           /* SYS_BRK */
@@ -26,8 +33,6 @@ _start:
     mov $10, %esi
     mov $53, %eax           /* SYS_KILL */
     syscall
-    /* Signal handler runs via deliver_pending_signal. */
-    /* After handler + SYS_SIGRETURN, we resume here. */
 
     /* Exit with pid */
     mov %r12d, %edi
@@ -37,3 +42,6 @@ _start:
 
 sig_handler:
     ret
+
+password:
+    .ascii "test"
