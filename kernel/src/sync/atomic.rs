@@ -24,6 +24,7 @@ impl KernelAtomicUsize {
         self.0.fetch_add(val, Ordering::SeqCst)
     }
 
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn fetch_sub(&self, val: usize) -> usize {
         self.0.fetch_sub(val, Ordering::SeqCst)
     }
@@ -32,10 +33,12 @@ impl KernelAtomicUsize {
         self.0.fetch_add(1, Ordering::SeqCst);
     }
 
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn decrement(&self) {
         self.0.fetch_sub(1, Ordering::SeqCst);
     }
 
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn compare_exchange(&self, expected: usize, new: usize) -> Result<usize, usize> {
         self.0.compare_exchange(expected, new, Ordering::Acquire, Ordering::Relaxed)
     }

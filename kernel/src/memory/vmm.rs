@@ -2,6 +2,7 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use x86_64::VirtAddr;
 use x86_64::structures::paging::{FrameAllocator, PageTableFlags, Size4KiB, Page, PhysFrame};
+#[allow(unused_imports)]  // not used currently, but I believe this should be present for completeness.
 use crate::arch::paging::{PageMapper, PHYS_MEM_OFFSET};
 use crate::memory::frame_allocator::FrameAlloc;
 
@@ -150,6 +151,7 @@ impl Vmm {
         Ok(())
     }
 
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn fork_eager(&self, child_mapper: &mut PageMapper, frame_alloc: &mut (impl FrameAlloc + FrameAllocator<Size4KiB>), parent_mapper: &PageMapper) -> Result<Vmm, ()> {
         let mut child_vmm = Vmm::new();
         let phys_offset = crate::arch::paging::PHYS_MEM_OFFSET;

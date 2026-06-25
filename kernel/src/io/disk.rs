@@ -19,6 +19,7 @@ pub trait DiskDevice: Send {
 #[derive(Debug)]
 pub enum DiskError {
     OutOfBounds,
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     IoError,
     CrcMismatch,
 }
@@ -39,9 +40,11 @@ pub struct RamDisk {
     base: VirtAddr,
     byte_len: usize,
     sector_size: usize,
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     cursor: u64,
     crcs: Vec<u32>,
-    frames: Vec<PhysFrame<Size4KiB>>,  // retained so the mapping can be torn down later if needed
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
+    frames: Vec<PhysFrame<Size4KiB>>,
 }
 
 

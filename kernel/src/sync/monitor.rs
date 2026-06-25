@@ -20,14 +20,16 @@ impl<T> Monitor<T> {
         self.lock.lock() 
     }
     
-    pub fn try_lock(&self) -> Option<SpinlockGuard<'_, T>> { 
-        self.lock.try_lock() 
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
+    pub fn try_lock(&self) -> Option<SpinlockGuard<'_, T>> {
+        self.lock.try_lock()
     }
 
     pub fn wait<'a>(&'a self, guard: SpinlockGuard<'a, T>) -> SpinlockGuard<'a, T> {
         self.cond.wait(guard)
     }
 
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn signal(&self) {
         self.cond.signal();
     }

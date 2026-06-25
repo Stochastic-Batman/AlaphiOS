@@ -21,7 +21,7 @@ pub fn init() {
     {
         let guard = boot_task.lock();
         let addr = &guard.scratch as *const PerCpuScratch as u64;
-        unsafe { KernelGsBase::write(x86_64::VirtAddr::new(addr)); }
+        KernelGsBase::write(x86_64::VirtAddr::new(addr));
     }
 
     TASK_TABLE.lock().insert(boot_task.clone());

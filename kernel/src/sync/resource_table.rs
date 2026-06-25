@@ -28,6 +28,7 @@ impl ResourceTable {
         self.map.get(&handle).cloned()
     }
 
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn remove(&mut self, handle: u64) {
         self.map.remove(&handle);
     }

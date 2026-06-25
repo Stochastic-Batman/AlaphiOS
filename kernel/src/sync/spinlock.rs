@@ -50,8 +50,7 @@ impl<T> Spinlock<T> {
         SpinlockGuard { lock: self }
     }
 
-    // Single attempt; returns None immediately if the lock is taken.
-    // Used by trylock() syscall surface.
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn try_lock(&self) -> Option<SpinlockGuard<'_, T>> {
         if self.locked.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
             preempt_disable();
@@ -61,7 +60,7 @@ impl<T> Spinlock<T> {
         }
     }
 
-    // SAFETY: caller must guarantee no other reference exists (single-threaded init only).
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub unsafe fn get_mut_unchecked(&self) -> &mut T {
         unsafe { &mut *self.data.get() }
     }
@@ -75,6 +74,7 @@ impl<T> Spinlock<T> {
 
 
 impl<'a, T> SpinlockGuard<'a, T> {
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     fn new(lock: &'a Spinlock<T>) -> Self {
         Self { lock }
     }

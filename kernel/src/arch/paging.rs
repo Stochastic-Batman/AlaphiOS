@@ -61,10 +61,12 @@ impl PageMapper {
         self.inner.translate_addr(virt)
     }
 
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn flush_tlb(&self, page: Page<Size4KiB>) {
         x86_64::instructions::tlb::flush(page.start_address());
     }
 
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn flush_tlb_all(&self) {
         x86_64::instructions::tlb::flush_all();
     }

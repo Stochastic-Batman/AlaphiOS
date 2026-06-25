@@ -101,10 +101,12 @@ impl MlfqScheduler {
         }
     }
 
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn needs_reschedule(&self) -> bool {
         self.needs_reschedule
     }
 
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn force_reschedule(&mut self) {
         self.needs_reschedule = true;
     }

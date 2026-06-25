@@ -10,6 +10,7 @@ pub struct Rwx(pub u8);
 impl Rwx {
     pub fn can_read(self) -> bool { self.0 & 0b100 != 0 }
     pub fn can_write(self) -> bool { self.0 & 0b010 != 0 }
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn can_execute(self) -> bool { self.0 & 0b001 != 0 }
 }
 
@@ -54,6 +55,7 @@ impl PermsDb {
         self.entries.iter()
     }
 
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn len(&self) -> usize {
         self.entries.len()
     }

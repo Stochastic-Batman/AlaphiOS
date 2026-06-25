@@ -50,6 +50,7 @@ impl FdRegistry {
         self.tables.entry(pid).or_insert_with(ProcFdTable::new)
     }
 
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn remove_process(&mut self, pid: Pid) {
         self.tables.remove(&pid);
     }

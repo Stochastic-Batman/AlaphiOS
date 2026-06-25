@@ -4,6 +4,7 @@ use crate::process::pid::Pid;
 
 
 pub struct Fcb {
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub path: String,
     pub cursor: u64,
     pub open_count: u32,

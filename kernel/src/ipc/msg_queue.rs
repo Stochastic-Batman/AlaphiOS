@@ -5,10 +5,13 @@ use crate::sync::condvar::CondVar;
 use super::channel::{IpcChannel, IpcError};
 
 
-pub const MSG_SIZE: usize = 256; 
-pub const MAX_MESSAGES: usize = 128; 
+#[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
+pub const MSG_SIZE: usize = 256;
+#[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
+pub const MAX_MESSAGES: usize = 128;
 
 
+#[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
 pub struct MsgQueue {
     queue: Spinlock<VecDeque<[u8; MSG_SIZE]>>,
     not_empty: CondVar,
@@ -17,6 +20,7 @@ pub struct MsgQueue {
 }
 
 impl MsgQueue {
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub const fn new() -> Self {
         Self {
             queue: Spinlock::new(VecDeque::new()),

@@ -4,11 +4,13 @@ use crate::sync::spinlock::Spinlock;
 
 
 #[derive(Debug)]
+#[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
 pub enum DeviceError {
     NotFound,
     IoError,
 }
 
+#[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
 pub trait BlockDevice: Send {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, DeviceError>;
     fn write(&mut self, buf: &[u8]) -> Result<usize, DeviceError>;

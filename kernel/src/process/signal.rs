@@ -3,6 +3,7 @@ use crate::process::table::{TASK_TABLE, TaskRegistry};
 
 
 pub const MAX_SIGNALS: usize = 32;
+#[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
 pub const SIGTERM: u8 = 15;
 const SYS_SIGRETURN_NR: u8 = 54;
 const TRAMPOLINE_PAD: u64 = 16;

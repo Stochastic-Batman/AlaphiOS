@@ -2,6 +2,7 @@
 // unlike Spinlock/Monitor, holding the lock does not disable preemption and can span multiple syscalls:
 // SYS_MUTEX_LOCK returns to user space still "held", released later by an unrelated SYS_MUTEX_UNLOCK call.
 use alloc::collections::VecDeque;
+#[allow(unused_imports)]  // not used currently, but I believe this should be present for completeness.
 use crate::process::pid::{Pid, Tid};
 use crate::process::table::{TaskRegistry, TASK_TABLE};
 use crate::process::task::TaskState;

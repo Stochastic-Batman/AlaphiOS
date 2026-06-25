@@ -47,9 +47,11 @@ pub struct Task {
     pub state: TaskState,
     pub rsp: u64,
     pub cr3: u64,
-    pub preempt_count: u32,  // TODO: replace global PREEMPT_COUNT stub with this field once current_task() exists in the scheduler
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
+    pub preempt_count: u32,
     pub priority: u8,
     pub parent: Option<Pid>,
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub children: Vec<Pid>,
     pub exit_code: Option<i32>,
     pub vmm: Vmm,
@@ -62,6 +64,7 @@ pub struct Task {
     pub heap_start: u64,  // first page after code; 0 for kernel tasks
     pub brk: u64,         // current program break (grows from heap_start)
     pub signals: SignalState,
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     kernel_stack: Vec<u8>,
 }
 
@@ -102,8 +105,8 @@ impl Task {
         let _ = stack;  // retained as a parameter for the unsafe write below
         unsafe {  // these callee-saved registers must not change (or change, but must be restored before the function exits)
             let ptr = top as *mut u64;
-            ptr.sub(1).write(entry as u64); // consumed by trampoline's ret
-            ptr.sub(2).write(task_trampoline as u64);  // consumed by switch_to's ret
+            ptr.sub(1).write(entry as *const () as u64); // consumed by trampoline's ret
+            ptr.sub(2).write(task_trampoline as *const () as u64);  // consumed by switch_to's ret
             ptr.sub(3).write(0); // rbx
             ptr.sub(4).write(0); // rbp
             ptr.sub(5).write(0); // r12
@@ -206,6 +209,7 @@ impl Task {
         }
     }
 
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn check_stack_canary(&self) {
         let canary = &self.kernel_stack[GUARD_SIZE - 8..GUARD_SIZE];
         if canary.iter().any(|&b| b != GUARD_POISON) {

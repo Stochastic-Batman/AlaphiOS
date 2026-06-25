@@ -4,7 +4,9 @@ use crate::ipc::channel::{IpcChannel, IpcError};
 
 
 pub struct SharedMem {
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub name: alloc::string::String,
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub data: Arc<Spinlock<alloc::vec::Vec<u8>>>,
 }
 

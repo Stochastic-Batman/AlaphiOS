@@ -119,7 +119,7 @@ pub extern "C" fn syscall_handler(nr: usize, frame: &mut TrapFrame) -> isize {
     let arg1 = frame.rsi as usize;
     let arg2 = frame.rdx as usize;
     let arg3 = frame.r10 as usize;
-    let arg4 = frame.r8  as usize;
+    let _arg4 = frame.r8  as usize;
 
     match nr {
         SYS_GETPID => scheduler::current_pid().as_u64() as isize,

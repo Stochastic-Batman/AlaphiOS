@@ -44,6 +44,7 @@ pub const SYS_CLOSE: usize = 25;
 pub const SYS_SEEK: usize = 26;
 pub const SYS_CREATE: usize = 27;
 pub const SYS_DELETE: usize = 28;
+#[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
 pub const SYS_TRUNCATE: usize = 29;
 pub const SYS_RENAME: usize = 30;
 pub const SYS_MKDIR: usize = 31;
@@ -52,7 +53,9 @@ pub const SYS_GETDENTS: usize = 33;  // read directory entries
 pub const SYS_STAT: usize = 34;  // file metadata 
 pub const SYS_CHMOD: usize = 35;  // rwx permission bits 
 pub const SYS_CHOWN: usize = 36;  // uid/gid ownership 
-pub const SYS_FLOCK: usize = 37;  // mandatory exclusive lock 
+#[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
+pub const SYS_FLOCK: usize = 37;
+#[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
 pub const SYS_FUNLOCK: usize = 38;
 pub const SYS_MARK_SHARED: usize = 39;  // make file immutably shared 
 
@@ -77,4 +80,5 @@ pub const SYS_REVOKE: usize = 52;
 pub const SYS_KILL: usize = 53;  // send signal to task (deferred cancellation)
 pub const SYS_SIGRETURN: usize = 54;  // return from signal handler
 pub const SYS_SIGNAL: usize = 55;  // register signal handler
+#[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
 pub const SYSCALL_COUNT: usize = 56;

@@ -1,5 +1,6 @@
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
+#[allow(unused_imports)]  // not used currently, but I believe this should be present for completeness.
 use crate::process::pid::{Pid, Tid};
 use crate::process::task::Task;
 use crate::sync::spinlock::Spinlock;

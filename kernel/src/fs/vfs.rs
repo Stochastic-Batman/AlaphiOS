@@ -19,7 +19,9 @@ pub enum FsError {
     IsShared,  // write attempted on immutable-shared file
     NotOpen,
     InvalidPath,
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     NotADirectory,
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     IsADirectory,
     NotMounted,
 }

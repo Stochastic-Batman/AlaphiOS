@@ -262,6 +262,7 @@ pub fn test_consistency_repair<D: DiskDevice>(disk: &FatFs<D>) {
     assert!(!auth.verify(99, b"bad"), "dirty record should not be present");
 }
 
+#[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
 pub fn append_auth_entry<D: DiskDevice>(disk: &FatFs<D>, entry: &AuthEntry) -> Result<(), ()> {
     let root = disk.root_dir();
     let mut file = root.create_file(AUTH_DB_PATH).map_err(|_| ())?;
@@ -272,6 +273,7 @@ pub fn append_auth_entry<D: DiskDevice>(disk: &FatFs<D>, entry: &AuthEntry) -> R
 }
 
 
+#[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
 pub fn append_perms_entry<D: DiskDevice>(disk: &FatFs<D>, path: &str, entry: &PermEntry) -> Result<(), ()> {
     let root = disk.root_dir();
     let mut file = root.create_file(PERMS_DB_PATH).map_err(|_| ())?;

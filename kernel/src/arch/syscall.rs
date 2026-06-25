@@ -68,7 +68,7 @@ pub fn init() {
         );
     }
 
-    LStar::write(VirtAddr::new(syscall_entry as u64));
+    LStar::write(VirtAddr::new(syscall_entry as *const () as u64));
 
     // mask IF on entry so we don't take a timer interrupt before saving user state.
     SFMask::write(RFlags::INTERRUPT_FLAG);

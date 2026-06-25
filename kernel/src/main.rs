@@ -124,6 +124,18 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     seed_test_user();
     install_init_binary();
  
+    all_the_freaking_tests();
+
+    scheduler::spawn(Task::new(memory::swap::reaper_main, (scheduler::mlfq::NUM_QUEUES - 1) as u8, None));
+    scheduler::spawn(Task::new(ping_pong_a, 0, None));
+    scheduler::spawn(Task::new(ping_pong_b, 0, None));
+
+    serial_println!("boot complete");
+    loop { x86_64::instructions::hlt(); }
+}
+
+
+fn all_the_freaking_tests() {
     io_smoke_test();
     sync_syscall_smoke_test();
     fs_smoke_test();
@@ -135,13 +147,6 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     clone_smoke_test();
     fork_smoke_test();
     user_mode_smoke_test();
-
-    scheduler::spawn(Task::new(memory::swap::reaper_main, (scheduler::mlfq::NUM_QUEUES - 1) as u8, None));
-    scheduler::spawn(Task::new(ping_pong_a, 0, None));
-    scheduler::spawn(Task::new(ping_pong_b, 0, None));
- 
-    serial_println!("boot complete");
-    loop { x86_64::instructions::hlt(); }
 }
 
 
@@ -348,7 +353,7 @@ fn fork_smoke_test() {
     FORK_FLAG.store(0);
     let curr = scheduler::current_tid();
     let phys_offset = x86_64::VirtAddr::new(PHYS_MEM_OFFSET);
-    let mut parent_mapper = unsafe { PageMapper::new(phys_offset) };
+    let parent_mapper = unsafe { PageMapper::new(phys_offset) };
     let (child_l4, _) = { let mut fa = FRAME_ALLOCATOR.lock(); parent_mapper.clone_kernel_half(&mut *fa) };
     let child_pid = {
         let table = TASK_TABLE.lock();

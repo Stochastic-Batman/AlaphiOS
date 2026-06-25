@@ -55,9 +55,7 @@ pub fn init() {
         load_tss(GDT.1.tss);
     }
 
-    unsafe {
-        KernelGsBase::write(VirtAddr::new(&BOOT_SCRATCH as *const PerCpuScratch as u64));
-    }
+    KernelGsBase::write(VirtAddr::new(&BOOT_SCRATCH as *const PerCpuScratch as u64));
 }
 
 

@@ -119,6 +119,7 @@ pub struct FatFs<D: DiskDevice> {
 }
 
 impl<D: DiskDevice> FatFs<D> {
+    #[allow(dead_code)]  // not used currently, but I believe this should be present for completeness.
     pub fn mount(dev: D) -> Result<Self, FatIoError> {
         let io = DiskIo::new(dev);
         let fs = FileSystem::new(io, FsOptions::new()).map_err(|_| FatIoError)?;
