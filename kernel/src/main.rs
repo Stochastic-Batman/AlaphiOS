@@ -117,6 +117,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     { let probe = Box::new(0xDEAD_BEEFu64); serial_println!("heap: {:x} @ {:p}", *probe, probe); }
     mount_boot_disk();
     load_system_domain();
+    memory::swap::init();
     arch::paging::record_kernel_l4_entries();
     init_devices();
     scheduler::init();
@@ -128,10 +129,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     fs_smoke_test();
     security_smoke_test();
     device_smoke_test();
+    swap_smoke_test();
     clone_smoke_test();
     fork_smoke_test();
     user_mode_smoke_test();
 
+    scheduler::spawn(Task::new(memory::swap::reaper_main, (scheduler::mlfq::NUM_QUEUES - 1) as u8, None));
     scheduler::spawn(Task::new(ping_pong_a, 0, None));
     scheduler::spawn(Task::new(ping_pong_b, 0, None));
  
@@ -243,6 +246,45 @@ fn device_smoke_test() {
     CONSOLE.lock().put(b'!');
 
     serial_println!("device smoke test passed");
+}
+
+fn swap_smoke_test() {
+    use crate::memory::vmm::{Vmm, VmArea, VmAreaKind};
+    use crate::memory::frame_allocator::FrameAlloc;
+    use x86_64::structures::paging::{Page, PageTableFlags};
+    use x86_64::VirtAddr;
+
+    let offset = VirtAddr::new(PHYS_MEM_OFFSET);
+    let parent = unsafe { PageMapper::new(offset) };
+    let (l4, mut mapper) = { let mut fa = FRAME_ALLOCATOR.lock(); parent.clone_kernel_half(&mut *fa) };
+    let cr3 = l4.start_address().as_u64();
+
+    let va = VirtAddr::new(0x5555_0000);
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE;
+
+    let mut vmm = Vmm::new();
+    vmm.add_area(VmArea { start: va, end: va + 4096u64, flags, kind: VmAreaKind::Anonymous });
+
+    {
+        let mut fa = FRAME_ALLOCATOR.lock();
+        let frame = fa.allocate().expect("swap test: OOM");
+        let p = (PHYS_MEM_OFFSET + frame.start_address().as_u64()) as *mut u8;
+        unsafe { for i in 0..4096 { p.add(i).write((i & 0xFF) as u8); } }
+        mapper.map_page(Page::containing_address(va), frame, flags, &mut *fa);
+    }
+
+    assert!(memory::swap::evict_addr(&mut vmm, cr3, va.as_u64()), "evict failed");
+    assert!(mapper.translate_addr(va).is_none(), "page still mapped after evict");
+
+    {
+        let mut fa = FRAME_ALLOCATOR.lock();
+        vmm.handle_fault(va, &mut mapper, &mut *fa, false).expect("swap fault-in failed");
+    }
+    let phys = mapper.translate_addr(va).expect("page not mapped after fault-in");
+    let p = (PHYS_MEM_OFFSET + phys.as_u64()) as *const u8;
+    unsafe { for i in 0..4096 { assert_eq!(p.add(i).read(), (i & 0xFF) as u8, "swap data mismatch"); } }
+
+    serial_println!("swap smoke test passed");
 }
 
 fn clone_smoke_test() {

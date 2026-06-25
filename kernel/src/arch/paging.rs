@@ -98,8 +98,32 @@ impl PageMapper {
     }
 
     pub fn remap_flags(&mut self, page: Page<Size4KiB>, new_flags: PageTableFlags) {
-        unsafe { 
+        unsafe {
             self.inner.update_flags(page, new_flags).expect("remap_flags: page not mapped").flush();
+        }
+    }
+
+    // Reads the leaf PTE flags for a mapped address, used by the swap reaper to
+    // inspect the accessed and dirty bits during enhanced second-chance selection.
+    pub fn page_flags(&self, addr: VirtAddr) -> Option<PageTableFlags> {
+        use x86_64::structures::paging::mapper::TranslateResult;
+        match self.inner.translate(addr) {
+            TranslateResult::Mapped { flags, .. } => Some(flags),
+            _ => None,
+        }
+    }
+
+    // Clears the accessed bit so a referenced page gets a second chance on the
+    // next reaper sweep, and flushes the TLB so the CPU re-sets it on next touch.
+    pub fn clear_accessed(&mut self, page: Page<Size4KiB>) {
+        if let Some(flags) = self.page_flags(page.start_address()) {
+            if flags.contains(PageTableFlags::ACCESSED) {
+                unsafe {
+                    if let Ok(f) = self.inner.update_flags(page, flags & !PageTableFlags::ACCESSED) {
+                        f.flush();
+                    }
+                }
+            }
         }
     }
 }

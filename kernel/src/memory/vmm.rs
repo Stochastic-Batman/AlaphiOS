@@ -1,3 +1,4 @@
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use x86_64::VirtAddr;
 use x86_64::structures::paging::{FrameAllocator, PageTableFlags, Size4KiB, Page, PhysFrame};
@@ -22,22 +23,40 @@ pub struct VmArea {
 
 pub struct Vmm {
     areas: Vec<VmArea>,
+    swapped: BTreeMap<u64, (u64, PageTableFlags)>,  // page vaddr -> (swap slot, restore flags)
 }
 
 
 impl Vmm {
     pub fn new() -> Self {
-        Self { areas: Vec::new() }
+        Self { areas: Vec::new(), swapped: BTreeMap::new() }
     }
 
     pub fn add_area(&mut self, area: VmArea) {
         self.areas.push(area);
     }
 
+    pub fn areas(&self) -> &[VmArea] {
+        &self.areas
+    }
+
+    pub fn record_swapped(&mut self, page_vaddr: u64, slot: u64, flags: PageTableFlags) {
+        self.swapped.insert(page_vaddr, (slot, flags));
+    }
+
     pub fn handle_fault(&mut self, fault_addr: VirtAddr, mapper: &mut PageMapper, frame_alloc: &mut (impl FrameAlloc + FrameAllocator<Size4KiB>), is_write: bool) -> Result<(), ()> {
-        let area = self.areas.iter().find(|a| a.start <= fault_addr && fault_addr < a.end).ok_or(())?;
         let offset = crate::arch::paging::PHYS_MEM_OFFSET;
         let page = x86_64::structures::paging::Page::containing_address(fault_addr);
+
+        let page_vaddr = page.start_address().as_u64();
+        if let Some((slot, flags)) = self.swapped.remove(&page_vaddr) {
+            let new_frame = frame_alloc.allocate().ok_or(())?;
+            crate::memory::swap::swap_in(slot, new_frame);
+            mapper.map_page(page, new_frame, flags, frame_alloc);
+            return Ok(());
+        }
+
+        let area = self.areas.iter().find(|a| a.start <= fault_addr && fault_addr < a.end).ok_or(())?;
 
         if let Some(phys) = mapper.translate_addr(fault_addr) {
             // Page is present but faulted: COW - must be a writable area mapped read-only.
