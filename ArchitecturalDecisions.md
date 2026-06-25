@@ -29,7 +29,7 @@ If any details are not specified below, follow the Linux defaults unless impleme
 14. Thread execution supports asynchronous thread creation, alongside `fork()` and `join()` semantics, aligning with standard POSIX thread behaviors.
 15. Thread pools are not managed by the operating system kernel; they are implemented in user space by application programmers.
 16. Thread signaling supports both synchronous and asynchronous delivery, utilizing deferred cancellation exclusively.
-17. The kernel adopts the Linux paradigm of using a unified `task` abstraction instead of distinguishing between threads and processes, grouping tasks via thread groups to handle `getpid()` and evaluating flags such as `CLONE_VM`, `CLONE_FILES`, and `CLONE_SIGHAND`.
+17. The kernel adopts the Linux paradigm of using a unified `task` abstraction instead of distinguishing between threads and processes, grouping tasks via thread groups to handle `getpid()` and evaluating flags such as `CLONE_VM` and `CLONE_SIGHAND`. `CLONE_FILES` (shared file descriptor table across threads) is omitted; each task maintains its own descriptor space.
 18. The kernel is fully preemptive, using synchronization primitives such as mutex locks to prevent race conditions on shared kernel data structures.
 
 
@@ -42,7 +42,7 @@ If any details are not specified below, follow the Linux defaults unless impleme
 ## Chapters 6 & 7: Synchronization
 
 21. Monitors are constructed using a combination of a spinlock and a condition variable accompanied by a thread wait queue.
-22. Each core features an architectural `preempt_count` variable tracked within its active execution `task` structure; it increments when a spinlock is acquired or `preempt_disable()` is called, and decrements when a spinlock is released or `preempt_enable()` is called. If the hardware timer interrupt fires while `preempt_count > 0`, preemption is bypassed to protect the core from deadlocking on nested kernel resources.
+22. A global `preempt_count` atomic variable increments when a spinlock is acquired or `preempt_disable()` is called, and decrements when a spinlock is released or `preempt_enable()` is called. If the hardware timer interrupt fires while `preempt_count > 0`, preemption is bypassed to protect the core from deadlocking on nested kernel resources. A per-task field exists for future migration but the global counter is authoritative.
 23. An architecture-specific atomic integer module is implemented utilizing x86 `LOCK` prefix hardware primitives to perform non-blocking, indivisible operations on shared metrics - such as pipe offsets, shared `task` counters, or PID allocators - without triggering scheduler context switches.
 
 
@@ -55,7 +55,7 @@ If any details are not specified below, follow the Linux defaults unless impleme
 
 ## Chapter 9: Main Memory
 
-27. The operating system supports dynamic loading of program components.
+27. Program loading uses a flat-binary format linked to a fixed virtual base address. Dynamic loading of program components at runtime is not supported.
 28. Code compilation relies on static linking; dynamic link libraries (DLLs) are not supported.
 29. The operating system kernel resides in high memory addresses, while user spaces occupy lower memory address spaces.
 30. Memory allocation is managed through paging rather than contiguous memory allocation.
@@ -65,7 +65,7 @@ If any details are not specified below, follow the Linux defaults unless impleme
 34. The Translation Lookaside Buffer (TLB) is manually flushed during every context switch when a new page table is selected.
 35. A valid-invalid bit is maintained in each page table entry to signify memory presence.
 36. Page-table origin and page-table length constraints are checked to restrict processes to their designated user address spaces.
-37. Shared pages and page-sharing mechanisms are not supported.
+37. Explicit shared-memory page mapping between unrelated processes is not supported. Copy-on-write fork temporarily shares physical frames between parent and child until a write fault triggers duplication.
 38. Address translation is handled through a multi-level hierarchical (forward-mapped) page table structure.
 39. The system supports swapping at the page level rather than at the whole-process level.
 
@@ -96,7 +96,7 @@ If any details are not specified below, follow the Linux defaults unless impleme
 57. Device mounting, file-system mounting abstractions, and configuration layouts like `/etc/fstab` are skipped.
 58. The kernel binary and system files reside on a FAT32 system partition; the Rust `bootloader` crate loads the kernel from this partition during initialization. No custom bootstrap block logic is hardcoded into the disk image.
 59. Bad block detection and bad block correction routines are omitted.
-60. The virtual disk image exposed to QEMU is partitioned into two regions: a FAT32 system partition for the kernel, user files, and metadata overlay, and a fixed 2 GB raw swap partition addressed directly by the kernel's swap manager. The swap area is not a file within the FAT32 volume; FAT32 enforces a per-file maximum of 4 GB, making a large in-filesystem swap file impractical, so a dedicated raw partition is used instead. General filesystem mounting support is not required because the system recognizes exactly these two fixed partition roles.
+60. The swap partition is backed by a dedicated RamDisk (currently 4 MiB / 1024 pages for testing) addressed directly by the kernel's swap manager via page-sized slots. In deployment this would be a fixed 2 GB raw region on the QEMU disk image, but the slot-based abstraction is identical at either size. The FAT32 system partition holds the kernel, user files, and metadata overlay. General filesystem mounting support is not required because the system recognizes exactly these two fixed partition roles.
 61. Tertiary storage systems, network-attached storage, and cloud storage are not supported.
 62. RAID configurations are not supported.
 
@@ -106,7 +106,7 @@ If any details are not specified below, follow the Linux defaults unless impleme
 63. Access to device controllers is handled using memory-mapped I/O.
 64. I/O operations are entirely interrupt-driven, bypassing continuous register polling techniques.
 65. The interrupt structure is split into a First-Level Interrupt Handler (FLIH) and a Second-Level Interrupt Handler (SLIH).
-66. Large data transfers utilize double buffering (DMA to kernel space, then kernel space to user space) to facilitate data movement.
+66. The RamDisk is memory-mapped into kernel virtual space, so I/O transfers are direct `memcpy` operations rather than DMA-based double buffering. A real hardware driver would add a DMA path behind the same `DiskDevice` trait.
 67. The standard `ioctl()` system call interface is implemented for device manipulation.
 68. Device drivers adhere to standard application I/O interface abstractions.
 69. Block devices expose a uniform interface containing `read()`, `write()`, and `seek()` operations.
@@ -122,8 +122,8 @@ If any details are not specified below, follow the Linux defaults unless impleme
 ## Chapter 13: File-System Interface
 
 77. Case sensitivity for all file and directory names is enforced at the kernel syscall layer. The underlying FAT32 volume stores names via Long File Name (LFN) entries; the kernel rejects any `open()` or `create()` call whose name differs only in case from an existing entry.
-78. File metadata tracks names, unique identifiers, types, physical locations, sizes in bytes, access protection rights, timestamps, and user identification owners. Ownership and permission fields are not stored natively by FAT32; they are maintained in the kernel-managed metadata overlay described in Decision 106.
-79. Supported file operations implemented via system calls include `create()`, `open()`, `write()`, `read()`, `seek()`, `delete()`, `truncate()`, and `rename()`.
+78. File metadata tracks names, sizes in bytes, directory flag, access protection rights (`rwx` per owner/group/world), and user/group identification owners. Timestamps are delegated to the underlying `fatfs` crate and not surfaced in the kernel `Stat` structure. Ownership and permission fields are not stored natively by FAT32; they are maintained in the kernel-managed metadata overlay described in Decision 106.
+79. Supported file operations implemented via system calls include `create()`, `open()`, `write()`, `read()`, `seek()`, `delete()`, and `rename()`. `truncate()` has a syscall number reserved (`SYS_TRUNCATE = 29`) but is not wired in the dispatcher.
 80. Hard links and soft/symbolic links are not supported.
 81. The kernel maintains a centralized open-file table to track active files.
 82. Files must be explicitly opened via `open()` before executing any operations on them, with the exception of `create()`, `delete()`, and `rename()`.
