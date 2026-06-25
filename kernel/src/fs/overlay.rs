@@ -49,6 +49,14 @@ impl PermsDb {
     pub fn get_mut(&mut self, path: &str) -> Option<&mut PermEntry> {
         self.entries.get_mut(path)
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &PermEntry)> {
+        self.entries.iter()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 pub struct AuthEntry {
@@ -92,5 +100,13 @@ impl AuthDb {
 
     pub fn insert(&mut self, entry: AuthEntry) {
         self.entries.insert(entry.uid, entry);
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &AuthEntry> {
+        self.entries.values()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
     }
 }

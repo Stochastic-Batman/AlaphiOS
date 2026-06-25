@@ -130,6 +130,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     security_smoke_test();
     device_smoke_test();
     disk_scheduling_smoke_test();
+    consistency_smoke_test();
     swap_smoke_test();
     clone_smoke_test();
     fork_smoke_test();
@@ -271,6 +272,14 @@ fn disk_scheduling_smoke_test() {
     assert_eq!((merged[2].lba, merged[2].count, merged[2].is_write), (10, 1, true));
 
     serial_println!("disk scheduling smoke test passed");
+}
+
+fn consistency_smoke_test() {
+    let guard = fs::FS.lock();
+    let disk = guard.disk().expect("disk not mounted");
+    fs::system_domain::test_consistency_repair(disk);
+    drop(guard);
+    serial_println!("consistency smoke test passed");
 }
 
 fn device_smoke_test() {

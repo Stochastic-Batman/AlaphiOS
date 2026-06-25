@@ -77,74 +77,133 @@ fn decode_perms_record(buf: &[u8; PERMS_RECORD_SIZE]) -> (u8, alloc::string::Str
     (status, path, entry)
 }
 
-fn check_and_clear_status(status: u8, label: &str) {
-    if status == STATUS_DIRTY {
-        serial_println!("/.system/{}: dirty status bit on boot, clearing (no repair performed)", label);
+pub fn load_at_boot<D: DiskDevice>(disk: &FatFs<D>, auth: &mut AuthDb, perms: &mut PermsDb) {
+    let auth_dirty = load_auth_db(disk, auth);
+    let perms_dirty = load_perms_db(disk, perms);
+
+    if auth_dirty {
+        serial_println!("auth.db: dirty records found, rewriting");
+        repair_auth_db(disk, auth);
+    }
+
+    if perms_dirty {
+        serial_println!("perms.db: dirty records found, rewriting");
+        repair_perms_db(disk, perms);
     }
 }
 
 
-// Called once from kernel_main, after fs::mount_boot_disk().
-// Missing files are not an error: a freshly formatted volume has neither, and both BTreeMaps simply start empty.
-pub fn load_at_boot<D: DiskDevice>(disk: &FatFs<D>, auth: &mut AuthDb, perms: &mut PermsDb) {
-    load_auth_db(disk, auth);
-    load_perms_db(disk, perms);
-}
-
-
-fn load_auth_db<D: DiskDevice>(disk: &FatFs<D>, auth: &mut AuthDb) {
+fn load_auth_db<D: DiskDevice>(disk: &FatFs<D>, auth: &mut AuthDb) -> bool {
     let root = disk.root_dir();
+
     let mut file = match root.open_file(AUTH_DB_PATH) {
         Ok(f) => f,
         Err(_) => {
             serial_println!("auth.db not present, starting with empty auth table");
-            return;
+            return false;
         }
     };
 
+    let mut dirty = false;
     let mut buf = [0u8; AUTH_RECORD_SIZE];
+
     loop {
         match read_exact_or_eof(&mut file, &mut buf) {
             Ok(true) => {
                 let (status, entry) = decode_auth_record(&buf);
-                check_and_clear_status(status, "auth.db");
-                auth.insert(entry);
+
+                if status == STATUS_DIRTY {
+                    dirty = true;
+                } else {
+                    auth.insert(entry);
+                }
             }
             Ok(false) => break,
             Err(_) => {
                 serial_println!("auth.db: read error, stopping load early");
+                dirty = true;
                 break;
             }
         }
     }
+
+    dirty
 }
 
 
-fn load_perms_db<D: DiskDevice>(disk: &FatFs<D>, perms: &mut PermsDb) {
+fn load_perms_db<D: DiskDevice>(disk: &FatFs<D>, perms: &mut PermsDb) -> bool {
     let root = disk.root_dir();
+
     let mut file = match root.open_file(PERMS_DB_PATH) {
         Ok(f) => f,
         Err(_) => {
             serial_println!("perms.db not present, starting with empty perms table");
-            return;
+            return false;
         }
     };
 
+    let mut dirty = false;
     let mut buf = [0u8; PERMS_RECORD_SIZE];
+
     loop {
         match read_exact_or_eof(&mut file, &mut buf) {
             Ok(true) => {
                 let (status, path, entry) = decode_perms_record(&buf);
-                check_and_clear_status(status, "perms.db");
-                perms.set(path, entry);
+
+                if status == STATUS_DIRTY {
+                    dirty = true;
+                } else {
+                    perms.set(path, entry);
+                }
             }
             Ok(false) => break,
             Err(_) => {
                 serial_println!("perms.db: read error, stopping load early");
+                dirty = true;
                 break;
             }
         }
     }
+
+    dirty
+}
+
+
+fn repair_auth_db<D: DiskDevice>(disk: &FatFs<D>, auth: &AuthDb) {
+    disk.root_dir().create_file(AUTH_DB_PATH).ok();
+    let mut file = match disk.root_dir().open_file(AUTH_DB_PATH) {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+
+    file.seek(fatfs::SeekFrom::Start(0)).ok();
+    let mut buf = [0u8; AUTH_RECORD_SIZE];
+
+    for entry in auth.iter() {
+        encode_auth_record(&mut buf, STATUS_CLEAN, entry);
+        file.write_all(&buf).ok();
+    }
+
+    file.truncate().ok();
+}
+
+
+fn repair_perms_db<D: DiskDevice>(disk: &FatFs<D>, perms: &PermsDb) {
+    disk.root_dir().create_file(PERMS_DB_PATH).ok();
+    let mut file = match disk.root_dir().open_file(PERMS_DB_PATH) {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+
+    file.seek(fatfs::SeekFrom::Start(0)).ok();
+    let mut buf = [0u8; PERMS_RECORD_SIZE];
+
+    for (path, entry) in perms.iter() {
+        encode_perms_record(&mut buf, STATUS_CLEAN, path, entry);
+        file.write_all(&buf).ok();
+    }
+
+    file.truncate().ok();
 }
 
 
@@ -162,6 +221,45 @@ fn read_exact_or_eof<F: fatfs::Read>(file: &mut F, buf: &mut [u8]) -> Result<boo
     }
 
     Ok(true)
+}
+
+pub fn test_consistency_repair<D: DiskDevice>(disk: &FatFs<D>) {
+    const TEST_PATH: &str = "tauth.db";
+
+    disk.root_dir().create_file(TEST_PATH).expect("create test file");
+    {
+        let mut file = disk.root_dir().open_file(TEST_PATH).expect("open for write");
+        file.seek(fatfs::SeekFrom::Start(0)).ok();
+        let mut buf = [0u8; AUTH_RECORD_SIZE];
+
+        let clean = AuthEntry::new(10, b"good");
+        encode_auth_record(&mut buf, STATUS_CLEAN, &clean);
+        file.write_all(&buf).expect("write clean");
+
+        let dirty = AuthEntry::new(99, b"bad");
+        encode_auth_record(&mut buf, STATUS_DIRTY, &dirty);
+        file.write_all(&buf).expect("write dirty");
+    }
+
+    let mut auth = AuthDb::new();
+    {
+        let mut file = disk.root_dir().open_file(TEST_PATH).expect("open for read");
+        let mut buf = [0u8; AUTH_RECORD_SIZE];
+
+        while let Ok(true) = read_exact_or_eof(&mut file, &mut buf) {
+            let (status, entry) = decode_auth_record(&buf);
+
+            if status != STATUS_DIRTY {
+                auth.insert(entry);
+            }
+        }
+    }
+
+    disk.root_dir().remove(TEST_PATH).ok();
+
+    assert_eq!(auth.len(), 1, "expected 1 clean record, got {}", auth.len());
+    assert!(auth.verify(10, b"good"), "clean record verify failed");
+    assert!(!auth.verify(99, b"bad"), "dirty record should not be present");
 }
 
 pub fn append_auth_entry<D: DiskDevice>(disk: &FatFs<D>, entry: &AuthEntry) -> Result<(), ()> {
