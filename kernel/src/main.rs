@@ -129,6 +129,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     fs_smoke_test();
     security_smoke_test();
     device_smoke_test();
+    disk_scheduling_smoke_test();
     swap_smoke_test();
     clone_smoke_test();
     fork_smoke_test();
@@ -143,6 +144,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 }
 
 
+// all of this smoke tests are written by Claude Sonnet 4.6
 fn mount_boot_disk() {
     let disk = RamDisk::new(BOOT_DISK_SECTOR_COUNT, BOOT_DISK_SECTOR_SIZE);
     let fatfs = FatFs::format_and_mount(disk).expect("failed to format/mount boot FAT32 volume");
@@ -234,6 +236,41 @@ fn security_smoke_test() {
     assert!(r3.contains(Rights::EXECUTE));
 
     serial_println!("security smoke test passed");
+}
+
+fn disk_scheduling_smoke_test() {
+    use crate::io::crc::crc32;
+    use crate::io::scheduler::{CscanScheduler, FcfsScheduler, DiskRequest, RequestScheduler};
+
+    // CRC-32: verify a known round trip.
+    let data = b"AlaphiOS";
+    let c = crc32(data);
+    assert_eq!(crc32(data), c);
+    assert_ne!(c, 0);
+
+    // C-SCAN: set head to 6 via a dummy drain, then submit [2,8,3,10,1].
+    let mut cscan = CscanScheduler::new();
+    cscan.submit(DiskRequest { lba: 5, count: 1, is_write: false });
+    let _ = cscan.drain();
+    for &lba in &[2, 8, 3, 10, 1] {
+        cscan.submit(DiskRequest { lba, count: 1, is_write: false });
+    }
+    let order: alloc::vec::Vec<u64> = cscan.drain().iter().map(|r| r.lba).collect();
+    assert_eq!(order, alloc::vec![8, 10, 1, 2, 3]);
+
+    let mut fcfs = FcfsScheduler::new();
+    fcfs.submit(DiskRequest { lba: 5, count: 1, is_write: true });
+    fcfs.submit(DiskRequest { lba: 6, count: 1, is_write: true });
+    fcfs.submit(DiskRequest { lba: 7, count: 1, is_write: true });
+    fcfs.submit(DiskRequest { lba: 3, count: 1, is_write: false });
+    fcfs.submit(DiskRequest { lba: 10, count: 1, is_write: true });
+    let merged = fcfs.drain();
+    assert_eq!(merged.len(), 3);
+    assert_eq!((merged[0].lba, merged[0].count, merged[0].is_write), (5, 3, true));
+    assert_eq!((merged[1].lba, merged[1].count, merged[1].is_write), (3, 1, false));
+    assert_eq!((merged[2].lba, merged[2].count, merged[2].is_write), (10, 1, true));
+
+    serial_println!("disk scheduling smoke test passed");
 }
 
 fn device_smoke_test() {
